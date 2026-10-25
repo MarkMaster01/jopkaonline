@@ -7,20 +7,17 @@ export class JopRenderer {
         this.ctx = canvas.getContext('2d');
         this.graph = trackGraph;
 
-        // JOP Barevná paleta
         this.colors = {
             background: '#05070a',
-            trackFree: '#4a5568',       // Volný úsek (šedá)
-            trackOccupied: '#e53e3e',   // Obsazený úsek (červená)
-            switchJoint: '#ecc94b',     // Tělo výhybky (žlutá)
-            text: '#e2e8f0',            // Popisky
-            grid: '#1a202c'
+            trackFree: '#4a5568',
+            trackOccupied: '#e53e3e',
+            switchJoint: '#ecc94b',
+            text: '#e2e8f0',
+            grid: '#1a202c',
+            selected: '#eab308'
         };
     }
 
-    /**
-     * Hlavní vykreslovací smyčka
-     */
     render(trains = []) {
         const { width, height } = this.canvas;
         this.ctx.fillStyle = this.colors.background;
@@ -29,9 +26,8 @@ export class JopRenderer {
         this.drawGrid();
         this.drawSections();
         this.drawSwitches();
-        this.drawSignals(); // <-- Vykreslení návěstidel
+        this.drawSignals();
 
-        // Vykreslení všech aktivních vlaků
         trains.forEach(t => this.drawTrain(t));
     }
 
@@ -65,7 +61,6 @@ export class JopRenderer {
             this.ctx.strokeStyle = sec.occupied ? this.colors.trackOccupied : this.colors.trackFree;
             this.ctx.stroke();
 
-            // Název úseku
             const midX = (p1.x + p2.x) / 2;
             const midY = (p1.y + p2.y) / 2 - 12;
             this.ctx.fillStyle = this.colors.text;
@@ -76,7 +71,6 @@ export class JopRenderer {
 
     drawSwitches() {
         Object.values(this.graph.switches).forEach(sw => {
-            // Vykreslení jazyka výhybky podle polohy
             const targetPoint = (sw.position === 'STRAIGHT') ? sw.straightTarget : sw.divergingTarget;
 
             this.ctx.beginPath();
@@ -86,51 +80,56 @@ export class JopRenderer {
             this.ctx.strokeStyle = this.colors.switchJoint;
             this.ctx.stroke();
 
-            // Vykreslení kloubu výhybky (kroužek)
             this.ctx.beginPath();
             this.ctx.arc(sw.joint.x, sw.joint.y, 7, 0, Math.PI * 2);
-            this.ctx.fillStyle = this.colors.switchJoint;
+            this.ctx.fillStyle = sw.locked ? '#ed8936' : this.colors.switchJoint;
             this.ctx.fill();
 
-            // Popisek výhybky
-            this.ctx.fillStyle = this.colors.text;
+            // Zobrazení názvu a stavu zámku výhybky
+            this.ctx.fillStyle = sw.locked ? '#ed8936' : this.colors.text;
             this.ctx.font = 'bold 13px Consolas';
-            this.ctx.fillText(`${sw.id} [${sw.position === 'STRAIGHT' ? '+' : '-'}]`, sw.joint.x - 20, sw.joint.y + 25);
+            const lockStatus = sw.locked ? ' 🔒' : '';
+            this.ctx.fillText(`${sw.id} [${sw.position === 'STRAIGHT' ? '+' : '-'}]${lockStatus}`, sw.joint.x - 20, sw.joint.y + 25);
         });
     }
 
-/**
-     * Vykreslení vlakové soupravy
-     */
     drawTrain(train) {
         if (!train || !train.position) return;
 
         const { x, y } = train.position;
 
-        // Tělo vlaku (Červený obdélník)
         this.ctx.fillStyle = '#f56565';
         this.ctx.strokeStyle = '#feb2b2';
         this.ctx.lineWidth = 2;
         this.ctx.fillRect(x - 15, y - 8, 30, 16);
         this.ctx.strokeRect(x - 15, y - 8, 30, 16);
 
-        // Čelní světlo (Žlutý kroužek vpravo)
         this.ctx.beginPath();
         this.ctx.arc(x + 12, y, 3, 0, Math.PI * 2);
         this.ctx.fillStyle = '#faf089';
         this.ctx.fill();
 
-        // Číslo/ID Vlaku nad blokem
         this.ctx.fillStyle = '#ffffff';
         this.ctx.font = 'bold 11px Consolas';
         this.ctx.fillText(train.id, x - 12, y - 12);
     }
+
     drawSignals() {
         Object.values(this.graph.signals).forEach(sig => {
             const { x, y } = sig.position;
             const color = (sig.aspect === 'RED') ? '#e53e3e' : '#48bb78';
+            const isSelected = (this.graph.selectedSignalId === sig.id);
 
-            // Stožár návěstidla
+            // Zvýrazňovací kruh pro vybrané návěstidlo
+            if (isSelected) {
+                this.ctx.beginPath();
+                this.ctx.arc(x, y, 14, 0, Math.PI * 2);
+                this.ctx.strokeStyle = this.colors.selected;
+                this.ctx.lineWidth = 3;
+                this.ctx.stroke();
+            }
+
+            // Stožár
             this.ctx.beginPath();
             this.ctx.moveTo(x, y + 25);
             this.ctx.lineTo(x, y);
@@ -138,7 +137,7 @@ export class JopRenderer {
             this.ctx.strokeStyle = this.colors.text;
             this.ctx.stroke();
 
-            // Světelná svítilna (kroužek s barevným světlem)
+            // Svítilna
             this.ctx.beginPath();
             this.ctx.arc(x, y, 7, 0, Math.PI * 2);
             this.ctx.fillStyle = color;
@@ -147,8 +146,8 @@ export class JopRenderer {
             this.ctx.strokeStyle = '#ffffff';
             this.ctx.stroke();
 
-            // Označení návěstidla ("L")
-            this.ctx.fillStyle = this.colors.text;
+            // Označení
+            this.ctx.fillStyle = isSelected ? this.colors.selected : this.colors.text;
             this.ctx.font = 'bold 12px Consolas';
             this.ctx.fillText(sig.id, x - 4, y - 10);
         });
