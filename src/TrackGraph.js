@@ -52,7 +52,7 @@ export class TrackGraph {
     }
 
     // ... stávající metody toggleSwitch a toggleOccupancy ...
-}
+
 
     /**
      * Přehodí polohu výhybky, pokud není zamčená vlakovou cestou
@@ -78,4 +78,4 @@ export class TrackGraph {
             sec.occupied = !sec.occupied;
         }
     }
-}
+
