@@ -40,10 +40,19 @@ canvas.addEventListener('click', (event) => {
     const mouseX = event.clientX - rect.left;
     const mouseY = event.clientY - rect.top;
 
+    // A) Kontrola kliknutí na výhybku W1
     Object.values(graph.switches).forEach(sw => {
         const dist = Math.hypot(mouseX - sw.joint.x, mouseY - sw.joint.y);
         if (dist < 25) {
             graph.toggleSwitch(sw.id);
+        }
+    });
+
+    // B) Kontrola kliknutí na návěstidlo L (přepínání RED / GREEN)
+    Object.values(graph.signals).forEach(sig => {
+        const dist = Math.hypot(mouseX - sig.position.x, mouseY - sig.position.y);
+        if (dist < 20) {
+            graph.toggleSignal(sig.id);
         }
     });
 });
