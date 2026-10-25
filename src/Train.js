@@ -14,46 +14,37 @@ export class Train {
      * Aktualizace pozice vlaku v čase
      */
     update(trackGraph) {
-        this.progress += this.speed;
-
-        // Pokud vlak dojel na konec aktuálního segmentu, přeřadíme ho na další
-        if (this.progress >= 1.0) {
-            this.progress = 0.0;
-            this.currentSegment = this.getNextSegment(trackGraph);
-        }
-
-        // Výpočet aktuálních souřadnic X, Y podle geometrie segmentu
-        this.position = this.calculateCoordinates(trackGraph);
-
-        // Vyhledáme návěstidlo na aktuálním úseku vlaku
         const signal = Object.values(trackGraph.signals).find(
             sig => sig.segment === this.currentSegment
         );
 
-        // Pokud je před vlakem červená, zastavíme ho přesně u návěstidla
+        // Pokud je návěstidlo červené, zastavíme vlak před ním.
         if (signal && signal.aspect === 'RED') {
-            // Vlak dojíždí k návěstidlu
-            if (this.progress < signal.stopProgress && (this.progress + this.speed) >= signal.stopProgress) {
-                this.progress = signal.stopProgress;
+            const stopProgress = signal.stopProgress ?? 1;
+
+            // Vlak se blíží k zastavení - zastavíme přesně na bodě návěstidla.
+            if (this.progress < stopProgress && this.progress + this.speed >= stopProgress) {
+                this.progress = stopProgress;
                 this.position = this.calculateCoordinates(trackGraph);
-                return; // Zastavení pohybu
+                return;
             }
-            // Vlak už stojí před návěstidlem
-            if (this.progress === signal.stopProgress) {
-                return; // Pohyb se neaktualizuje
+
+            // Vlak už stojí u červeného návěstidla.
+            if (this.progress >= stopProgress) {
+                this.position = this.calculateCoordinates(trackGraph);
+                return;
             }
         }
 
-        // Standardní posun vlaku (pokud svítí zelená nebo zde návěstidlo není)
+        // Standardní posun vlaku.
         this.progress += this.speed;
 
-        if (this.progress >= 1.0) {
-            this.progress = 0.0;
+        while (this.progress >= 1) {
+            this.progress -= 1;
             this.currentSegment = this.getNextSegment(trackGraph);
         }
 
         this.position = this.calculateCoordinates(trackGraph);
-    
     }
 
     /**
