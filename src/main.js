@@ -17,17 +17,17 @@ function gameLoop() {
     // 1. Aktualizace pozic všech vlaků
     trains.forEach(train => {
         train.update(graph);
-
-        // Automatické přepínání obsazenosti úseku podle pozice vlaku
-        Object.keys(graph.sections).forEach(secId => {
-            graph.sections[secId].occupied = (train.currentSegment === secId);
-        });
     });
 
-    // 2. Vykreslení aktuálního stavu
+    // 2. Přepnutí obsazenosti úseků podle aktuálních pozic všech vlaků
+    Object.keys(graph.sections).forEach(secId => {
+        graph.sections[secId].occupied = trains.some(train => train.currentSegment === secId);
+    });
+
+    // 3. Vykreslení aktuálního stavu
     renderer.render(trains);
 
-    // 3. Požadavek na další snímek
+    // 4. Požadavek na další snímek
     requestAnimationFrame(gameLoop);
 }
 
