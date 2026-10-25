@@ -29,6 +29,7 @@ export class JopRenderer {
         this.drawGrid();
         this.drawSections();
         this.drawSwitches();
+        this.drawSignals(); // <-- Vykreslení návěstidel
 
         // Vykreslení všech aktivních vlaků
         trains.forEach(t => this.drawTrain(t));
@@ -123,5 +124,33 @@ export class JopRenderer {
         this.ctx.fillStyle = '#ffffff';
         this.ctx.font = 'bold 11px Consolas';
         this.ctx.fillText(train.id, x - 12, y - 12);
+    }
+    drawSignals() {
+        Object.values(this.graph.signals).forEach(sig => {
+            const { x, y } = sig.position;
+            const color = (sig.aspect === 'RED') ? '#e53e3e' : '#48bb78';
+
+            // Stožár návěstidla
+            this.ctx.beginPath();
+            this.ctx.moveTo(x, y + 25);
+            this.ctx.lineTo(x, y);
+            this.ctx.lineWidth = 2;
+            this.ctx.strokeStyle = this.colors.text;
+            this.ctx.stroke();
+
+            // Světelná svítilna (kroužek s barevným světlem)
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, 7, 0, Math.PI * 2);
+            this.ctx.fillStyle = color;
+            this.ctx.fill();
+            this.ctx.lineWidth = 1.5;
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.stroke();
+
+            // Označení návěstidla ("L")
+            this.ctx.fillStyle = this.colors.text;
+            this.ctx.font = 'bold 12px Consolas';
+            this.ctx.fillText(sig.id, x - 4, y - 10);
+        });
     }
 }
