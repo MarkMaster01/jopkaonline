@@ -10,6 +10,19 @@ export class TrackGraph {
             'S3': { id: 'S3', name: 'Staniční kolej 2 (Odbočka)', occupied: false, points: [{x: 450, y: 300}, {x: 750, y: 300}] }
         };
 
+        // Návěstidla (Signals)
+        this.signals = {
+            'L': {
+                id: 'L',
+                name: 'Vjezdové návěstidlo L',
+                aspect: 'RED',            // 'RED' (Stůj) nebo 'GREEN' (Volno)
+                segment: 'S1',             // Úsek, na kterém návěstidlo leží
+                stopProgress: 0.85,        // Pozice na úseku (85 %), kde vlak zastaví
+                position: { x: 270, y: 175 } // Souřadnice ikonky na Canvasu
+            }
+        };
+    }
+
         // Výhybky (Switches)
         this.switches = {
             'W1': {
@@ -27,6 +40,19 @@ export class TrackGraph {
             }
         };
     }
+
+/**
+     * Přepíná návěst mezi Stůj (RED) a Volno (GREEN)
+     */
+    toggleSignal(signalId) {
+        const sig = this.signals[signalId];
+        if (sig) {
+            sig.aspect = (sig.aspect === 'RED') ? 'GREEN' : 'RED';
+        }
+    }
+
+    // ... stávající metody toggleSwitch a toggleOccupancy ...
+}
 
     /**
      * Přehodí polohu výhybky, pokud není zamčená vlakovou cestou
