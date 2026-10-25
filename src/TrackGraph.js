@@ -3,6 +3,8 @@
  */
 export class TrackGraph {
     constructor() {
+        this.selectedSignalId = null; // Vybrané návěstidlo jako START cesty
+
         // Kolejové úseky (Sections)
         this.sections = {
             'S1': { id: 'S1', name: 'Traťový úsek Vjezd', occupied: false, points: [{x: 100, y: 200}, {x: 300, y: 200}] },
@@ -15,25 +17,23 @@ export class TrackGraph {
             'L': {
                 id: 'L',
                 name: 'Vjezdové návěstidlo L',
-                aspect: 'RED',            // 'RED' (Stůj) nebo 'GREEN' (Volno)
-                segment: 'S1',             // Úsek, na kterém návěstidlo leží
-                stopProgress: 0.85,        // Pozice na úseku (85 %), kde vlak zastaví
-                position: { x: 270, y: 175 } // Souřadnice ikonky na Canvasu
+                aspect: 'RED',            // 'RED' nebo 'GREEN'
+                segment: 'S1',
+                stopProgress: 0.85,
+                position: { x: 270, y: 175 }
             }
         };
-    }
 
         // Výhybky (Switches)
         this.switches = {
             'W1': {
                 id: 'W1',
                 name: 'Výhybka 1',
-                position: 'STRAIGHT', // 'STRAIGHT' (přímý směr) nebo 'DIVERGING' (odbočka)
-                locked: false,
+                position: 'STRAIGHT',     // 'STRAIGHT' nebo 'DIVERGING'
+                locked: false,            // Zamčeno vlakovou cestou
                 entrySection: 'S1',
                 straightSection: 'S2',
                 divergingSection: 'S3',
-                // Kloub výhybky a body odbočení pro UI
                 joint: { x: 300, y: 200 },
                 straightTarget: { x: 450, y: 200 },
                 divergingTarget: { x: 450, y: 300 }
@@ -41,27 +41,50 @@ export class TrackGraph {
         };
     }
 
-/**
-     * Přepíná návěst mezi Stůj (RED) a Volno (GREEN)
+    /**
+     * Vybere nebo zruší výběr návěstidla (START)
      */
-    toggleSignal(signalId) {
-        const sig = this.signals[signalId];
-        if (sig) {
-            sig.aspect = (sig.aspect === 'RED') ? 'GREEN' : 'RED';
+    selectSignal(signalId) {
+        if (this.selectedSignalId === signalId) {
+            this.selectedSignalId = null;
+        } else {
+            this.selectedSignalId = signalId;
         }
     }
 
-    // ... stávající metody toggleSwitch a toggleOccupancy ...
+    /**
+     * Postaví vlakovou cestu z návěstidla na cílovou kolej
+     */
+    setRoute(signalId, targetSectionId) {
+        const sig = this.signals[signalId];
+        const sw = this.switches['W1'];
+        if (!sig || !sw) return false;
 
+        if (targetSectionId === 'S2') {
+            sw.position = 'STRAIGHT';
+            sw.locked = true;
+            sig.aspect = 'GREEN';
+            this.selectedSignalId = null;
+            return true;
+        } else if (targetSectionId === 'S3') {
+            sw.position = 'DIVERGING';
+            sw.locked = true;
+            sig.aspect = 'GREEN';
+            this.selectedSignalId = null;
+            return true;
+        }
+
+        return false;
+    }
 
     /**
-     * Přehodí polohu výhybky, pokud není zamčená vlakovou cestou
+     * Přehodí polohu výhybky (pouze pokud není zamčená)
      */
     toggleSwitch(switchId) {
         const sw = this.switches[switchId];
         if (!sw) return false;
         if (sw.locked) {
-            console.warn(`Výhybka ${switchId} je zamčená!`);
+            console.warn(`Výhybka ${switchId} je zamčená vlakovou cestou!`);
             return false;
         }
 
@@ -69,13 +92,10 @@ export class TrackGraph {
         return true;
     }
 
-    /**
-     * Přepne obsazenost úseku vlakem (pro testování)
-     */
     toggleOccupancy(sectionId) {
         const sec = this.sections[sectionId];
         if (sec) {
             sec.occupied = !sec.occupied;
         }
     }
-
+}
