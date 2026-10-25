@@ -24,6 +24,36 @@ export class Train {
 
         // Výpočet aktuálních souřadnic X, Y podle geometrie segmentu
         this.position = this.calculateCoordinates(trackGraph);
+
+        // Vyhledáme návěstidlo na aktuálním úseku vlaku
+        const signal = Object.values(trackGraph.signals).find(
+            sig => sig.segment === this.currentSegment
+        );
+
+        // Pokud je před vlakem červená, zastavíme ho přesně u návěstidla
+        if (signal && signal.aspect === 'RED') {
+            // Vlak dojíždí k návěstidlu
+            if (this.progress < signal.stopProgress && (this.progress + this.speed) >= signal.stopProgress) {
+                this.progress = signal.stopProgress;
+                this.position = this.calculateCoordinates(trackGraph);
+                return; // Zastavení pohybu
+            }
+            // Vlak už stojí před návěstidlem
+            if (this.progress === signal.stopProgress) {
+                return; // Pohyb se neaktualizuje
+            }
+        }
+
+        // Standardní posun vlaku (pokud svítí zelená nebo zde návěstidlo není)
+        this.progress += this.speed;
+
+        if (this.progress >= 1.0) {
+            this.progress = 0.0;
+            this.currentSegment = this.getNextSegment(trackGraph);
+        }
+
+        this.position = this.calculateCoordinates(trackGraph);
+    
     }
 
     /**
