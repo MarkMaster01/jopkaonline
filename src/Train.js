@@ -1,5 +1,5 @@
 /**
- * Train.js - Třída vlakové soupravy s podporou vícekolejných stanic
+ * Train.js - Vlaková souprava s precizní zabezpečovací logikou podle ČD / JOP
  */
 
 export class Train {
@@ -9,8 +9,8 @@ export class Train {
         this.from = config.from || 'Západ';
         this.to = config.to || 'Východ';
         this.targetTrack = config.targetTrack || 'K1';
-        this.arrTime = config.arrTime || '08:05';
-        this.depTime = config.depTime || '08:10';
+        this.arrTime = config.arrTime || '08:04';
+        this.depTime = config.depTime || '08:08';
         this.lengthM = config.lengthM || 180;
         this.weightT = config.weightT || 260;
         this.maxSpeed = config.maxSpeed || 90;
@@ -18,13 +18,8 @@ export class Train {
         this.direction = config.direction || 'RIGHT'; // 'RIGHT' nebo 'LEFT'
         this.state = config.state || 'WAITING_CONSENT';
 
-        // Počáteční úsek podle směru jízdy
-        if (config.currentSection) {
-            this.currentSection = config.currentSection;
-        } else {
-            this.currentSection = this.direction === 'RIGHT' ? 'T1_EXT' : 'T2_EXT';
-        }
-
+        // Výchozí traťový úsek
+        this.currentSection = config.currentSection || (this.direction === 'RIGHT' ? 'T1_EXT' : 'T2_EXT');
         this.progress = this.direction === 'RIGHT' ? 0.0 : 1.0;
         this.speed = config.speed || 0.0035;
         this.currentSpeedKmH = 0;
@@ -32,6 +27,9 @@ export class Train {
         this.dwellDuration = config.dwellDuration || 14;
         this.dwellRemaining = this.dwellDuration;
         this.position = { x: 0, y: 0 };
+
+        // Sada projetých návěstidel (aby se vlak po shození návěstidla do Stůj sám nezastavil!)
+        this.passedSignals = new Set();
     }
 
     startApproach() {
@@ -46,14 +44,15 @@ export class Train {
             return;
         }
 
-        // Vlak stojí u nástupiště
+        // 1. Zastavení ve stanici u perónu (odbavení cestujících)
         if (this.state === 'STOPPED') {
             this.currentSpeedKmH = 0;
             this.dwellRemaining -= deltaSec;
 
-            // Zjistíme odjezdové návěstidlo pro tento směr a kolej
+            // Kontrola odjezdového návěstidla
             const depSig = this.findDepartureSignal(trackGraph);
 
+            // Může odjet, pokud uplynul pobyt (nebo u tranzitu) a odjezdové návěstidlo svítí na Volno
             if (this.dwellRemaining <= 0 && depSig && depSig.aspect !== 'RED') {
                 this.state = 'MOVING';
                 if (audioSystem) audioSystem.playApproach2();
@@ -64,42 +63,47 @@ export class Train {
 
         this.currentSpeedKmH = this.maxSpeed;
 
-        // Kontrola návěstidla na aktuálním úseku
+        // 2. Kontrola návěstidel na aktuálním úseku
         const relevantSignal = Object.values(trackGraph.signals).find(sig => {
             return sig.section === this.currentSection && sig.direction === this.direction;
         });
 
-        if (relevantSignal) {
-            const atStop = this.direction === 'RIGHT'
-                ? this.progress >= relevantSignal.stopProgress - 0.02
-                : this.progress <= relevantSignal.stopProgress + 0.02;
+        if (relevantSignal && !this.passedSignals.has(relevantSignal.id)) {
+            const stopProg = relevantSignal.stopProgress ?? (this.direction === 'RIGHT' ? 0.75 : 0.25);
 
-            if (relevantSignal.aspect === 'RED' && atStop) {
-                // Zastavení před návěstidlem
-                this.progress = relevantSignal.stopProgress;
-                this.currentSpeedKmH = 0;
-                this.calculateCoordinates(trackGraph);
-                return;
-            }
+            // Pokud návěstidlo zakazuje jízdu (Stůj / RED)
+            if (relevantSignal.aspect === 'RED') {
+                const approachingStop = this.direction === 'RIGHT'
+                    ? (this.progress >= stopProg - 0.02)
+                    : (this.progress <= stopProg + 0.02);
 
-            // Průjezd kolem návěstidla s volnoznakem
-            if (relevantSignal.aspect !== 'RED') {
-                const justPassed = this.direction === 'RIGHT'
-                    ? (this.progress < relevantSignal.stopProgress && (this.progress + this.speed >= relevantSignal.stopProgress))
-                    : (this.progress > relevantSignal.stopProgress && (this.progress - this.speed <= relevantSignal.stopProgress));
+                if (approachingStop) {
+                    // Zastavit PŘED návěstidlem!
+                    this.progress = stopProg;
+                    this.currentSpeedKmH = 0;
+                    this.calculateCoordinates(trackGraph);
+                    return;
+                }
+            } else {
+                // Návěstidlo dovoluje jízdu (GREEN, YELLOW, CALL_ON)
+                const passingPoint = this.direction === 'RIGHT'
+                    ? (this.progress >= stopProg)
+                    : (this.progress <= stopProg);
 
-                if (justPassed) {
-                    // Shazujeme návěstidlo do polohy Stůj
+                if (passingPoint) {
+                    // Vlak právě míjí návěstidlo -> shazujeme návěstidlo do polohy Stůj!
                     relevantSignal.aspect = 'RED';
+                    this.passedSignals.add(relevantSignal.id);
                     if (audioSystem) audioSystem.playRelayClick();
                 }
             }
         }
 
-        // Posun po úseku
+        // 3. Posun podél úseku
         const step = this.direction === 'RIGHT' ? this.speed : -this.speed;
         this.progress += step;
 
+        // Přechod na další úsek
         if (this.direction === 'RIGHT' && this.progress >= 1.0) {
             this.moveToNextSection(trackGraph, audioSystem);
         } else if (this.direction === 'LEFT' && this.progress <= 0.0) {
@@ -129,6 +133,7 @@ export class Train {
 
         if (!nextSecId || nextSecId === 'END_OF_TRACK' || !trackGraph.sections[nextSecId]) {
             this.state = 'DEPARTED';
+            this.currentSpeedKmH = 0;
             return;
         }
 
@@ -140,8 +145,17 @@ export class Train {
             nextSec.occupied = true;
         }
 
-        // Kontrola zastavení ve stanici u perónu
+        // Příjezd na staniční kolej
         if (this.currentSection.startsWith('K') && this.state !== 'STOPPED' && this.dwellRemaining > 0) {
+            // Kontrola, zda máme předem postavený průjezd (odjezdové návěstidlo už svítí na Volno)
+            const depSig = this.findDepartureSignal(trackGraph);
+            if (this.category === 'Nex' || this.category === 'Pn') {
+                // Nákladní tranzitní vlak při postaveném průjezdu nezastavuje
+                if (depSig && depSig.aspect !== 'RED') {
+                    this.state = 'MOVING';
+                    return;
+                }
+            }
             this.state = 'STOPPED';
             this.currentSpeedKmH = 0;
             if (audioSystem) audioSystem.playRelayClick();
@@ -151,9 +165,7 @@ export class Train {
     }
 
     resolveNextSection(cur, graph) {
-        const stationId = graph.currentStationId;
-
-        if (stationId === 'brod') {
+        if (graph.currentStationId === 'brod') {
             return this.resolveNextSectionBrod(cur, graph);
         } else {
             return this.resolveNextSectionLuzna(cur, graph);
@@ -204,46 +216,74 @@ export class Train {
         if (this.direction === 'RIGHT') {
             switch (cur) {
                 case 'T1_EXT': return 'T1';
-                case 'T1': return sw.W1.position === 'PLUS' ? 'SEC_BW1' : 'SEC_BW1_K3';
-                case 'T2_WEST': return sw.W2.position === 'PLUS' ? 'SEC_BW2' : 'SEC_BW2_K4';
+                case 'T2_EXT': return 'T2_WEST';
+                case 'T1':
+                    // Vjezd z 1. traťové koleje: přes W1 do spojky nebo na K1
+                    return sw.W1.position === 'PLUS' ? 'SEC_BW1' : 'SEC_BW1_W2';
+                case 'T2_WEST':
+                    // Vjezd z 2. traťové koleje: přes W3 na K2 nebo K4
+                    return sw.W3.position === 'PLUS' ? 'SEC_BW3' : 'SEC_BW3_K4';
+                case 'SEC_BW1_W2':
+                    // Spojka ze spodní trati na K3 / K5
+                    return sw.W2.position === 'PLUS' ? 'SEC_BW2_K3' : 'SEC_BW2_K5';
                 case 'SEC_BW1': return 'K1';
-                case 'SEC_BW1_K3': return sw.W3.position === 'PLUS' ? 'K3' : 'SEC_BW1_K5';
-                case 'SEC_BW1_K5': return 'K5';
-                case 'SEC_BW2': return 'K2';
-                case 'SEC_BW2_K4': return 'K4';
-                case 'K1': return 'SEC_BW6';
-                case 'K2': return 'SEC_BW5';
-                case 'K3': return 'SEC_BW6_K3';
-                case 'K4': return 'SEC_BW5_K4';
-                case 'K5': return 'SEC_BW7_K5';
-                case 'SEC_BW5_K4': return 'SEC_BW5';
-                case 'SEC_BW5': return 'T_EAST';
-                case 'SEC_BW6_K3': return 'SEC_BW6';
-                case 'SEC_BW7_K5': return 'SEC_BW6';
-                case 'SEC_BW6': return sw.W7.position === 'PLUS' ? 'T_EAST' : 'TRAIN_SOUTH';
-                case 'TRAIN_SOUTH': return 'END_OF_TRACK';
-                case 'T_EAST': return 'T_EAST_EXT';
-                case 'T_EAST_EXT': return 'END_OF_TRACK';
+                case 'SEC_BW3': return 'K2';
+                case 'SEC_BW3_K4': return 'K4';
+                case 'SEC_BW2_K3': return 'K3';
+                case 'SEC_BW2_K5': return 'K5';
+
+                // Výjezdy na východní zhlaví
+                case 'K4': return 'SEC_EW1_K4';
+                case 'K2': return 'SEC_EW1';
+                case 'K1': return 'SEC_EW2';
+                case 'K3': return 'SEC_EW3_K3';
+                case 'K5': return 'SEC_EW3_K5';
+
+                case 'SEC_EW1_K4': return 'T2_EAST';
+                case 'SEC_EW1': return sw.W7.position === 'PLUS' ? 'T2_EAST' : 'SEC_EW2';
+                case 'SEC_EW2': return sw.W8.position === 'PLUS' ? 'T1_EAST' : 'SEC_SOUTH';
+                case 'SEC_EW3_K3': return 'SEC_EW2';
+                case 'SEC_EW3_K5': return 'SEC_SOUTH';
+
+                case 'SEC_SOUTH': return 'T_SOUTH';
+                case 'T1_EAST': return 'T1_EAST_EXT';
+                case 'T2_EAST': return 'T2_EAST_EXT';
+                case 'T_SOUTH': return 'END_OF_TRACK';
+                case 'T1_EAST_EXT': return 'END_OF_TRACK';
+                case 'T2_EAST_EXT': return 'END_OF_TRACK';
                 default: return 'END_OF_TRACK';
             }
         } else {
+            // Směr LEFT (z Východu do Brodu)
             switch (cur) {
-                case 'T_EAST_EXT': return 'T_EAST';
-                case 'T_EAST': return sw.W6.position === 'PLUS' ? 'SEC_BW6' : 'SEC_BW6_K3';
-                case 'SEC_BW6': return 'K1';
-                case 'SEC_BW6_K3': return 'K3';
+                case 'T1_EAST_EXT': return 'T1_EAST';
+                case 'T2_EAST_EXT': return 'T2_EAST';
+                case 'T1_EAST':
+                    return sw.W8.position === 'PLUS' ? 'SEC_EW2' : 'SEC_EW3_K3';
+                case 'T2_EAST':
+                    return sw.W6.position === 'PLUS' ? 'SEC_EW1' : 'SEC_EW1_K4';
+                case 'SEC_EW1_K4': return 'K4';
+                case 'SEC_EW1': return 'K2';
+                case 'SEC_EW2': return sw.W7.position === 'PLUS' ? 'K1' : 'K3';
+                case 'SEC_EW3_K3': return 'K3';
+
+                // Výjezdy na západ
                 case 'K1': return 'SEC_BW1';
-                case 'K2': return 'SEC_BW2';
-                case 'K3': return 'SEC_BW1_K3';
-                case 'K4': return 'SEC_BW2_K4';
-                case 'K5': return 'SEC_BW1_K5';
+                case 'K2': return 'SEC_BW3';
+                case 'K3': return 'SEC_BW2_K3';
+                case 'K4': return 'SEC_BW3_K4';
+                case 'K5': return 'SEC_BW2_K5';
+
                 case 'SEC_BW1': return 'T1';
-                case 'SEC_BW2': return 'T2_WEST';
-                case 'SEC_BW1_K3': return 'T1';
-                case 'SEC_BW2_K4': return 'T2_WEST';
-                case 'SEC_BW1_K5': return 'T1';
+                case 'SEC_BW3': return 'T2_WEST';
+                case 'SEC_BW3_K4': return 'T2_WEST';
+                case 'SEC_BW2_K3': return 'T1';
+                case 'SEC_BW2_K5': return 'T1';
+
                 case 'T1': return 'T1_EXT';
+                case 'T2_WEST': return 'T2_EXT';
                 case 'T1_EXT': return 'END_OF_TRACK';
+                case 'T2_EXT': return 'END_OF_TRACK';
                 default: return 'END_OF_TRACK';
             }
         }

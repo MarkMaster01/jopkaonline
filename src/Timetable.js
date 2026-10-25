@@ -1,14 +1,14 @@
 /**
- * Timetable.js - Grafikon vlakové dopravy s podporou více stanic a volitelného automatického vjezdu
+ * Timetable.js - Grafikon vlakové dopravy (GVD) podle skutečného času simulace
  */
 import { STATIONS } from './Stations.js';
 import { Train } from './Train.js';
 
 export class Timetable {
     constructor(stationId = 'luzna') {
-        this.simTimeSec = 8 * 3600; // 08:00:00
+        this.simTimeSec = 8 * 3600; // Počátek simulace 08:00:00
         this.timeScale = 1;
-        this.autoEntry = false; // Nastavení: automatický vjezd bez nutnosti manuálního souhlasu
+        this.autoEntry = false; // Automatický vjezd bez nutnosti manuálního souhlasu
         this.trainCounter = 100;
         this.trains = [];
 
@@ -18,12 +18,14 @@ export class Timetable {
     loadStation(stationId) {
         this.currentStationId = stationId;
         const station = STATIONS[stationId] || STATIONS['luzna'];
-        this.trains = station.defaultSchedule.map(cfg => new Train(cfg));
+        // Vlaky začínají ve stavu PLANNED (podle času v GVD)
+        this.trains = station.defaultSchedule.map(cfg => {
+            const tr = new Train(cfg);
+            tr.state = 'PLANNED'; // Ještě nenastal čas odjezdu ze sousední stanice
+            return tr;
+        });
     }
 
-    /**
-     * Vloží nový náhodný vlak do GVD
-     */
     spawnRandomTrain() {
         this.trainCounter += 5;
         const isBrod = this.currentStationId === 'brod';
@@ -32,14 +34,14 @@ export class Timetable {
         const cat = categories[Math.floor(Math.random() * categories.length)];
         const num = Math.floor(1000 + Math.random() * 9000);
 
-        const currentMin = Math.floor(this.simTimeSec / 60);
-        const arrM = currentMin + 1;
-        const depM = arrM + 4;
+        const currentSec = this.simTimeSec;
+        const arrSec = currentSec + 90; // za 1.5 minuty
+        const depSec = arrSec + 240;
 
-        const formatT = (m) => {
-            const h = Math.floor(m / 60) % 24;
-            const mins = m % 60;
-            return `${String(h).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+        const formatSec = (s) => {
+            const h = Math.floor(s / 3600) % 24;
+            const m = Math.floor((s % 3600) / 60);
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
         };
 
         const targetTrack = isBrod 
@@ -52,31 +54,56 @@ export class Timetable {
             from: isRight ? 'Západ' : 'Východ',
             to: isRight ? 'Východ' : 'Západ',
             targetTrack: targetTrack,
-            arrTime: formatT(arrM),
-            depTime: formatT(depM),
+            arrTime: formatSec(arrSec),
+            depTime: formatSec(depSec),
             direction: isRight ? 'RIGHT' : 'LEFT',
             speed: 0.0035,
             maxSpeed: 85,
-            dwellDuration: 12,
-            state: this.autoEntry ? 'APPROACHING' : 'WAITING_CONSENT'
+            dwellDuration: 14,
+            state: 'PLANNED'
         });
 
         this.trains.push(newTrain);
         return newTrain;
     }
 
-    updateTime(deltaSec) {
+    /**
+     * Aktualizace simulačního času a řízení příchodu vlaků podle GVD
+     */
+    updateTime(deltaSec, trackGraph, audioSystem = null) {
         this.simTimeSec += deltaSec * this.timeScale;
 
-        // Pokud je zapnutý automatický vjezd vlaků, kontrolujeme, zda nastal čas příjezdu
-        if (this.autoEntry) {
-            const currentFormatted = this.getFormattedHourMin();
-            this.trains.forEach(t => {
-                if (t.state === 'WAITING_CONSENT' && t.arrTime <= currentFormatted) {
-                    t.startApproach();
+        const currentHourMin = this.getFormattedHourMin();
+
+        // Procházíme plánované vlaky
+        this.trains.forEach(train => {
+            if (train.state === 'PLANNED') {
+                // Převod času arrTime na sekundy
+                const [arrH, arrM] = train.arrTime.split(':').map(Number);
+                const trainArrSec = arrH * 3600 + arrM * 60;
+
+                // Vlak žádá o vjezd 60 sekund před plánovaným příjezdem
+                if (this.simTimeSec >= trainArrSec - 60) {
+                    train.state = 'WAITING_CONSENT';
+
+                    const dirKey = train.direction === 'RIGHT' ? 'WEST' : 'EAST';
+                    if (trackGraph.tzz[dirKey]) {
+                        trackGraph.tzz[dirKey].requestPending = true;
+                        trackGraph.tzz[dirKey].pendingTrainId = train.id;
+                    }
+
+                    if (this.autoEntry) {
+                        // V automatickém režimu okamžitě udělíme souhlas v čase vlaku!
+                        train.startApproach();
+                        trackGraph.grantConsent(dirKey);
+                        if (audioSystem) audioSystem.playApproach1();
+                    } else {
+                        // V manuálním režimu zazvoní žádost o traťový souhlas
+                        if (audioSystem) audioSystem.playApproach1();
+                    }
                 }
-            });
-        }
+            }
+        });
     }
 
     getFormattedHourMin() {

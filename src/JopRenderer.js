@@ -1,5 +1,5 @@
 /**
- * JopRenderer.js - Autentický vykreslovací systém JOP AŽD Praha s přesným zobrazením výhybek a cest
+ * JopRenderer.js - Vykreslování JOP kolejiště s prominentním panelem traťového souhlasu a čistými výhybkami
  */
 
 export class JopRenderer {
@@ -11,10 +11,10 @@ export class JopRenderer {
         this.colors = {
             bg: '#000000',
             grid: '#0f172a',
-            trackFree: '#475569',          // Volný úsek (ocelově šedá)
-            trackRouteVC: '#00e676',       // Závěr vlakové cesty (zářivě zelená)
-            trackRoutePC: '#ffffff',       // Závěr posunové cesty (bílá)
-            trackOccupied: '#ff1744',      // Obsazený úsek (sytě červená)
+            trackFree: '#475569',
+            trackRouteVC: '#00e676',       // Zářivě zelený závěr vlakové cesty
+            trackRoutePC: '#ffffff',       // Bílý závěr posunové cesty
+            trackOccupied: '#ff1744',      // Červené obsazení
             switchJoint: '#cbd5e1',
             text: '#f8fafc',
             textDim: '#64748b',
@@ -22,7 +22,7 @@ export class JopRenderer {
             signalGreen: '#00e676',
             signalYellow: '#ffd600',
             signalWhite: '#ffffff',
-            trainTagBg: '#facc15',         // Žlutý štítek vlaku
+            trainTagBg: '#facc15',
             trainTagText: '#000000',
             selectionBorder: '#00e676',
             platform: '#1e293b'
@@ -38,7 +38,7 @@ export class JopRenderer {
 
     render(trains = [], selectedSignal = null) {
         this.blinkTimer += 1;
-        if (this.blinkTimer >= 25) {
+        if (this.blinkTimer >= 22) {
             this.blinkState = !this.blinkState;
             this.blinkTimer = 0;
         }
@@ -53,28 +53,28 @@ export class JopRenderer {
         // 2. Nástupiště
         this.drawPlatforms();
 
-        // 3. Kolejové úseky s precizním závěrem cesty od návěstidla
+        // 3. Kolejové úseky (se zářivě zeleným závěrem přímo od návěstidla)
         this.drawSections();
 
-        // 4. Výhybky (indikátory a polohy bez přesahujících čar)
+        // 4. Výhybky (čisté JOP indikátory na kloubech)
         this.drawSwitches();
 
         // 5. Přejezdy (PZZ)
         this.drawCrossings();
 
-        // 6. Traťové souhlasy (TZZ)
+        // 6. Prominentní panely traťového souhlasu (TZZ)
         this.drawTzz();
 
-        // 7. Návěstidla s vysoce čitelnými popisky
+        // 7. Návěstidla s vysoce čitelnými štítky
         this.drawSignals(selectedSignal);
 
         // 8. Vlaky (JOP štítky přímo v kolejích)
         this.drawTrains(trains);
 
-        // 9. Živák
+        // 9. Živák v rohu
         this.drawZivak();
 
-        // 10. Nápověda výběru
+        // 10. Indikace výběru pro stavění cesty
         if (selectedSignal) {
             this.drawSelectionHint(selectedSignal);
         }
@@ -110,23 +110,16 @@ export class JopRenderer {
         });
     }
 
-    /**
-     * Vykreslení kolejových úseků.
-     * Pokud na úseku stojí výchozí návěstidlo s postavenou cestou,
-     * zelená barva začíná PŘESNĚ u návěstidla!
-     */
     drawSections() {
         Object.values(this.graph.sections).forEach(sec => {
             const [p1, p2] = sec.points;
 
-            // Zkontrolujeme, zda na tomto úseku leží aktivní návěstidlo se zelenou cestou
+            // Zkontrolujeme, zda na tomto úseku začíná aktivní návěstidlo se zelenou cestou
             const startSignalOnSection = Object.values(this.graph.signals).find(
                 sig => sig.section === sec.id && sig.aspect !== 'RED'
             );
 
             if (sec.locked && startSignalOnSection) {
-                // Úsek je v cestě a začíná na něm návěstidlo:
-                // Rozdělíme vykreslení na dvě části - před návěstidlem a za návěstidlem!
                 const sigX = startSignalOnSection.position.x;
                 const dir = startSignalOnSection.direction;
 
@@ -134,14 +127,14 @@ export class JopRenderer {
                 this.ctx.lineCap = 'round';
 
                 if (dir === 'RIGHT') {
-                    // Část před návěstidlem (v klidu nebo obsazená)
+                    // Část před návěstidlem (šedá / obsazená)
                     this.ctx.strokeStyle = sec.occupied ? this.colors.trackOccupied : this.colors.trackFree;
                     this.ctx.beginPath();
                     this.ctx.moveTo(p1.x, p1.y);
                     this.ctx.lineTo(sigX, p1.y);
                     this.ctx.stroke();
 
-                    // Část OD vjezdového návěstidla dopředu (ZELENÝ ZÁVĚR VC!)
+                    // Část OD návěstidla dopředu (ZÁŘIVĚ ZELENÁ!)
                     this.ctx.strokeStyle = this.colors.trackRouteVC;
                     this.ctx.beginPath();
                     this.ctx.moveTo(sigX, p1.y);
@@ -162,7 +155,6 @@ export class JopRenderer {
                     this.ctx.stroke();
                 }
             } else {
-                // Standardní vykreslení celého úseku
                 let strokeColor = this.colors.trackFree;
                 if (sec.occupied) {
                     strokeColor = this.colors.trackOccupied;
@@ -179,10 +171,9 @@ export class JopRenderer {
                 this.ctx.stroke();
             }
 
-            // Izolované styky na koncích
             this.drawBounds(p1, p2);
 
-            // Číslo staniční koleje
+            // Popisek staničních kolejí K1..K5
             if (sec.id.startsWith('K') && sec.id.length === 2) {
                 const midX = (p1.x + p2.x) / 2;
                 const midY = (p1.y + p2.y) / 2;
@@ -214,27 +205,22 @@ export class JopRenderer {
         });
     }
 
-    /**
-     * Vykreslení výhybek:
-     * Žádné přesahující čáry mimo kolejiště!
-     * Výhybka je označena přehledným JOP štítkem u kloubu s indikací [+] nebo [-].
-     */
     drawSwitches() {
         Object.values(this.graph.switches).forEach(sw => {
             const isPlus = sw.position === 'PLUS';
             const { x, y } = sw.joint;
 
-            // Kloub výhybky (kroužek na styku kolejí)
+            // Kloub výhybky
             this.ctx.beginPath();
-            this.ctx.arc(x, y, 4, 0, Math.PI * 2);
+            this.ctx.arc(x, y, 4.5, 0, Math.PI * 2);
             this.ctx.fillStyle = sw.locked ? this.colors.trackRouteVC : (isPlus ? '#cbd5e1' : '#facc15');
             this.ctx.fill();
 
-            // Štítek výhybky v JOP stylu: malý rámeček s číslem výhybky a stavem
+            // Přehledný JOP štítek s číslem a polohou
             const label = `${sw.id}[${isPlus ? '+' : '-'}]`;
             this.ctx.font = 'bold 10px Consolas, monospace';
             const tw = this.ctx.measureText(label).width + 6;
-            const offsetY = y > 220 ? 14 : -16;
+            const offsetY = y > 200 ? 15 : -16;
 
             this.ctx.fillStyle = '#050811';
             this.ctx.fillRect(x - tw / 2, y + offsetY - 6, tw, 13);
@@ -279,28 +265,57 @@ export class JopRenderer {
         });
     }
 
+    /**
+     * Prominentní panel traťového souhlasu (TZZ) přímo v kolejišti
+     */
     drawTzz() {
         for (const [key, t] of Object.entries(this.graph.tzz)) {
             const { x, y } = t.arrowPos;
-            const isBlink = t.requestPending && this.blinkState;
+            const isRequesting = t.requestPending;
 
-            this.ctx.fillStyle = isBlink ? '#facc15' : '#64748b';
-            this.ctx.font = 'bold 11px Consolas, monospace';
-            this.ctx.fillText(`◄► ${t.name}`, x, y);
+            // Rámeček panelu TZZ
+            const boxW = 160;
+            const boxH = 40;
 
-            if (t.direction === 'INTO_STATION') {
-                this.ctx.fillStyle = this.colors.signalGreen;
-                this.ctx.fillText('► Souhlas udělen', x, y + 14);
-            } else if (t.direction === 'OUT_OF_STATION') {
-                this.ctx.fillStyle = this.colors.signalGreen;
-                this.ctx.fillText('◄ Odjezd povolen', x, y + 14);
+            if (isRequesting) {
+                // Výrazné blikající žluté tlačítko žádosti!
+                this.ctx.fillStyle = this.blinkState ? '#facc15' : '#854d0e';
+                this.ctx.fillRect(x - 10, y - 10, boxW, boxH);
+                this.ctx.strokeStyle = '#fef08a';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x - 10, y - 10, boxW, boxH);
+
+                this.ctx.fillStyle = '#000000';
+                this.ctx.font = 'bold 10px Consolas, monospace';
+                this.ctx.fillText('⚠ ŽÁDOST O SOUHLAS!', x - 4, y + 4);
+                this.ctx.font = 'bold 9px Consolas, monospace';
+                this.ctx.fillText(`KLIKNI ZDE PRO VJEZD`, x - 4, y + 18);
+            } else {
+                // Klidový nebo udělený stav
+                this.ctx.fillStyle = '#0b1120';
+                this.ctx.fillRect(x - 8, y - 8, boxW, boxH);
+                this.ctx.strokeStyle = t.direction !== 'NONE' ? this.colors.signalGreen : '#334155';
+                this.ctx.lineWidth = 1;
+                this.ctx.strokeRect(x - 8, y - 8, boxW, boxH);
+
+                this.ctx.fillStyle = '#94a3b8';
+                this.ctx.font = 'bold 10px Consolas, monospace';
+                this.ctx.fillText(t.name, x - 2, y + 6);
+
+                if (t.direction === 'INTO_STATION') {
+                    this.ctx.fillStyle = this.colors.signalGreen;
+                    this.ctx.fillText('► Souhlas k vjezdu', x - 2, y + 20);
+                } else if (t.direction === 'OUT_OF_STATION') {
+                    this.ctx.fillStyle = this.colors.signalGreen;
+                    this.ctx.fillText('◄ Odjezd povolen', x - 2, y + 20);
+                } else {
+                    this.ctx.fillStyle = '#64748b';
+                    this.ctx.fillText('◄► Bez souhlasu', x - 2, y + 20);
+                }
             }
         }
     }
 
-    /**
-     * Vykreslení návěstidel s vysoce čitelným štítkem v samostatném tmavém rámečku
-     */
     drawSignals(selectedSignal) {
         Object.values(this.graph.signals).forEach(sig => {
             const { x, y } = sig.position;
@@ -314,14 +329,13 @@ export class JopRenderer {
                 sigColor = this.blinkState ? this.colors.signalWhite : this.colors.signalRed;
             }
 
-            // Orámování při výběru stavění cesty
             if (isSelected) {
                 this.ctx.strokeStyle = this.blinkState ? this.colors.selectionBorder : '#ffffff';
                 this.ctx.lineWidth = 2;
                 this.ctx.strokeRect(x - 14, y - 14, 28, 28);
             }
 
-            // Trojúhelník návěstidla
+            // Trojúhelníkové návěstidlo
             this.ctx.fillStyle = sigColor;
             this.ctx.beginPath();
             if (sig.direction === 'RIGHT') {
@@ -340,13 +354,12 @@ export class JopRenderer {
             this.ctx.lineWidth = 1;
             this.ctx.stroke();
 
-            // ČITELNÝ NÁPIS NÁVĚSTIDLA: Rámeček s kontrastním textem
+            // Kontrastní štítek označení návěstidla
             const label = sig.id;
             this.ctx.font = 'bold 11px Consolas, monospace';
             const tw = this.ctx.measureText(label).width + 8;
             const labelY = y < 200 ? y - 16 : y + 20;
 
-            // Malý stožár spojující návěstidlo s popiskem
             this.ctx.beginPath();
             this.ctx.moveTo(x, y + (y < 200 ? -7 : 7));
             this.ctx.lineTo(x, labelY + (y < 200 ? 6 : -6));
@@ -354,14 +367,12 @@ export class JopRenderer {
             this.ctx.lineWidth = 1;
             this.ctx.stroke();
 
-            // Pozadí štítku
             this.ctx.fillStyle = '#050811';
             this.ctx.fillRect(x - tw / 2, labelY - 7, tw, 15);
             this.ctx.strokeStyle = sig.aspect !== 'RED' ? this.colors.signalGreen : '#38bdf8';
             this.ctx.lineWidth = 1;
             this.ctx.strokeRect(x - tw / 2, labelY - 7, tw, 15);
 
-            // Text
             this.ctx.fillStyle = '#ffffff';
             this.ctx.textAlign = 'center';
             this.ctx.textBaseline = 'middle';
@@ -372,7 +383,7 @@ export class JopRenderer {
 
     drawTrains(trains) {
         trains.forEach(train => {
-            if (train.state === 'WAITING_CONSENT' || train.state === 'DEPARTED') return;
+            if (train.state === 'WAITING_CONSENT' || train.state === 'PLANNED' || train.state === 'DEPARTED') return;
 
             const { x, y } = train.position;
             if (!x || !y) return;
@@ -395,7 +406,6 @@ export class JopRenderer {
             this.ctx.textBaseline = 'middle';
             this.ctx.fillText(tagText, x, y);
 
-            // Popisek stavu
             if (train.state === 'MOVING') {
                 this.ctx.fillStyle = '#facc15';
                 this.ctx.font = '9px Consolas, monospace';
@@ -440,6 +450,6 @@ export class JopRenderer {
     drawSelectionHint(selectedSignalId) {
         this.ctx.fillStyle = '#00e676';
         this.ctx.font = 'bold 12px Consolas, monospace';
-        this.ctx.fillText(`[VOLBA CESTY] Návěstidlo ${selectedSignalId} vybráno ➔ Klikněte na cílovou kolej (K1, K2...) nebo trať`, 30, 25);
+        this.ctx.fillText(`[VOLBA CESTY] Návěstidlo ${selectedSignalId} vybráno ➔ Klikněte na cílovou kolej (K1..K5) nebo trať`, 30, 25);
     }
 }

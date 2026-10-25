@@ -1,5 +1,6 @@
 /**
- * TrackGraph.js - Správa modelu kolejiště a zabezpečovacího zařízení s podporou více stanic
+ * TrackGraph.js - Správa modelu kolejiště a zabezpečovacího zařízení
+ * Plná podpora stavění průjezdů (přímý vjezd i odjezd ze stejné koleje), traťového souhlasu a rušení cest.
  */
 import { STATIONS } from './Stations.js';
 
@@ -13,7 +14,6 @@ export class TrackGraph {
         const station = STATIONS[stationId] || STATIONS['luzna'];
 
         this.stationConfig = station;
-        // Hluboké kopie pro nezávislý stav simulace
         this.sections = JSON.parse(JSON.stringify(station.sections));
         this.switches = JSON.parse(JSON.stringify(station.switches));
         this.crossings = JSON.parse(JSON.stringify(station.crossings));
@@ -27,7 +27,8 @@ export class TrackGraph {
     }
 
     /**
-     * Pokusí se postavit vlakovou cestu ze startSignal na endTarget
+     * Pokusí se postavit vlakovou cestu ze startSignal na endTarget.
+     * Podporuje vjezdy, odjezdy i plnohodnotné průjezdy stanicí.
      */
     buildRoute(startSignalId, endTargetId, isShunt = false) {
         const sig = this.signals[startSignalId];
@@ -39,40 +40,59 @@ export class TrackGraph {
         );
 
         if (!routeDef) {
-            return { success: false, reason: 'Mezi těmito prvky není definována vlaková cesta.' };
+            return { success: false, reason: 'Mezi těmito prvky není definována žádná vlaková cesta.' };
         }
 
         // 1. Kontrola, zda návěstidlo již nemá postavenou cestu
         if (sig.aspect !== 'RED') {
-            return { success: false, reason: 'Návěstidlo již má postavenou cestu.' };
+            return { success: false, reason: 'Na tomto návěstidle již svítí volnoznak.' };
         }
 
-        // 2. Kontrola kolizí a volnosti úseků
+        const isDepartureSignal = startSignalId.startsWith('S') || (startSignalId.startsWith('L') && startSignalId.length === 2);
+
+        // 2. Kontrola kolizí a volnosti jednotlivých úseků cesty
         for (const secId of routeDef.sections) {
             const sec = this.sections[secId];
             if (!sec) continue;
 
-            if (sec.locked) {
-                return { success: false, reason: `Úsek ${sec.name} je již uzamčen v jiné cestě!` };
-            }
-            if (sec.occupied) {
-                return { success: false, reason: `Úsek ${sec.name} je obsazen vlakem!` };
+            // Pokud stavíme odjezd ze staniční koleje (např. S1 z K1),
+            // staniční kolej K1 může být obsazena čekajícím vlakem i uzamčena vjezdovou cestou (průjezd)
+            const isOriginTrack = isDepartureSignal && (secId === sig.section);
+
+            if (!isOriginTrack) {
+                // Kontrola uzamčení jinou protichůdnou cestou
+                if (sec.locked) {
+                    // Povolíme průjezd, pokud je cílová kolej uzamčena návaznou odjezdovou cestou ve stejném směru
+                    const isThroughRoute = (secId === routeDef.endTarget && this.activeRoutes.some(r => r.def.direction === routeDef.direction));
+                    if (!isThroughRoute) {
+                        return { success: false, reason: `Úsek ${sec.name} je již uzamčen v jiné jízdní cestě!` };
+                    }
+                }
+                // Kontrola obsazenosti úseku
+                if (sec.occupied) {
+                    return { success: false, reason: `Úsek ${sec.name} je obsazen!` };
+                }
             }
         }
 
-        // 3. Kontrola traťového souhlasu při odjezdu na trať
-        if (routeDef.endTarget === 'T2' || routeDef.endTarget === 'T_EAST') {
+        // 3. Kontrola traťového souhlasu při odjezdu na širou trať
+        if (routeDef.endTarget === 'T2' || routeDef.endTarget === 'T1_EAST' || routeDef.endTarget === 'T2_EAST') {
             if (this.tzz.EAST && this.tzz.EAST.direction !== 'OUT_OF_STATION') {
-                return { success: false, reason: 'Chybí traťový souhlas pro odjezd směr Východ!' };
+                return { success: false, reason: 'Chybí traťový souhlas pro odjezd směr Východ! (Klikněte na TZZ Východ)' };
             }
         }
         if (routeDef.endTarget === 'T1' || routeDef.endTarget === 'T2_WEST') {
             if (this.tzz.WEST && this.tzz.WEST.direction !== 'OUT_OF_STATION') {
-                return { success: false, reason: 'Chybí traťový souhlas pro odjezd směr Západ!' };
+                return { success: false, reason: 'Chybí traťový souhlas pro odjezd směr Západ! (Klikněte na TZZ Západ)' };
+            }
+        }
+        if (routeDef.endTarget === 'T_SOUTH') {
+            if (this.tzz.SOUTH && this.tzz.SOUTH.direction !== 'OUT_OF_STATION') {
+                return { success: false, reason: 'Chybí traťový souhlas pro odjezd směr Jih!' };
             }
         }
 
-        // 4. Přestavení výhybek do požadované polohy a uzamčení
+        // 4. Automatické přestavení a uzamčení výhybek do požadované polohy
         for (const [swId, targetPos] of Object.entries(routeDef.switches)) {
             const sw = this.switches[swId];
             if (sw) {
@@ -81,7 +101,7 @@ export class TrackGraph {
             }
         }
 
-        // 5. Uzamčení úseků do zeleného závěru VC
+        // 5. Závěr vlakové cesty (zelené rozsvícení úseků od návěstidla)
         const routeType = isShunt ? 'SHUNT' : 'TRAIN';
         routeDef.sections.forEach(secId => {
             const sec = this.sections[secId];
@@ -91,10 +111,10 @@ export class TrackGraph {
             }
         });
 
-        // 6. Rozsvícení volnoznaku na návěstidle
+        // 6. Rozsvícení znaku na návěstidle
         sig.aspect = isShunt ? 'WHITE' : routeDef.aspect;
 
-        // 7. Uzavření přejezdů na trase
+        // 7. Automatické uzavření přejezdu na zhlaví/trati
         for (const cross of Object.values(this.crossings)) {
             if (routeDef.sections.includes('T1') || routeDef.startSignal === '1L') {
                 cross.state = 'CLOSED';
@@ -113,7 +133,7 @@ export class TrackGraph {
     }
 
     /**
-     * Zrušení postavené cesty (volba RC)
+     * Rušení postavené cesty (volba RC)
      */
     cancelRoute(signalId) {
         const sig = this.signals[signalId];
@@ -147,9 +167,6 @@ export class TrackGraph {
         return true;
     }
 
-    /**
-     * Ruční přehození výhybky v klidovém stavu
-     */
     toggleSwitch(switchId) {
         const sw = this.switches[switchId];
         if (!sw) return false;
@@ -159,9 +176,6 @@ export class TrackGraph {
         return true;
     }
 
-    /**
-     * Přivolávací návěst (PN)
-     */
     setCallOn(signalId) {
         const sig = this.signals[signalId];
         if (!sig) return false;
@@ -174,6 +188,7 @@ export class TrackGraph {
         if (!t) return false;
         t.direction = 'INTO_STATION';
         t.requestPending = false;
+        t.pendingTrainId = null;
         return true;
     }
 

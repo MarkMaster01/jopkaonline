@@ -25,7 +25,7 @@
             min-height: 100vh;
         }
 
-        /* Horní ovládací lišta JOP */
+        /* Horní lišta JOP */
         header {
             display: flex;
             justify-content: space-between;
@@ -116,6 +116,25 @@
             font-weight: bold;
         }
 
+        /* Výstražný banner pro traťový souhlas (TZZ) */
+        .tzz-alert-banner {
+            display: none;
+            background: linear-gradient(90deg, #78350f, #b45309, #78350f);
+            border: 2px solid #facc15;
+            border-radius: 4px;
+            padding: 7px 14px;
+            align-items: center;
+            justify-content: space-between;
+            color: #ffffff;
+            font-size: 12px;
+            font-weight: bold;
+            animation: pulse-banner 1.5s infinite;
+        }
+        @keyframes pulse-banner {
+            0%, 100% { box-shadow: 0 0 5px rgba(250, 204, 21, 0.4); }
+            50% { box-shadow: 0 0 16px rgba(250, 204, 21, 0.9); }
+        }
+
         /* Hlavní plátno s maximalizovaným prostorem pro kolejiště */
         .canvas-wrapper {
             position: relative;
@@ -192,12 +211,16 @@
             border-bottom: 1px solid #111827;
         }
 
+        tr.state-planned {
+            color: #64748b;
+        }
         tr.state-waiting {
             color: #facc15;
-            background: rgba(250, 204, 21, 0.05);
+            background: rgba(250, 204, 21, 0.08);
+            font-weight: bold;
         }
         tr.state-waiting:hover {
-            background: rgba(250, 204, 21, 0.15);
+            background: rgba(250, 204, 21, 0.2);
         }
         tr.state-approaching {
             color: #38bdf8;
@@ -233,6 +256,7 @@
             margin-left: 6px;
             font-family: inherit;
             font-weight: bold;
+            transition: all 0.15s ease;
         }
         .btn-action-small:hover {
             background: #0ea5e9;
@@ -384,6 +408,11 @@
         </div>
     </header>
 
+    <!-- Výstražný banner traťového souhlasu (TZZ) -->
+    <div id="tzz-alert-banner" class="tzz-alert-banner">
+        <!-- Zobrazuje se dynamicky při žádosti ze sousední stanice -->
+    </div>
+
     <!-- Hlavní plátno kolejiště JOP -->
     <div class="canvas-wrapper">
         <canvas id="jopCanvas" width="1250" height="380"></canvas>
@@ -395,7 +424,7 @@
         <div class="panel-box">
             <div class="panel-title">
                 <span>INFORMAČNÍ PANEL VLAKŮ (GVD)</span>
-                <span style="font-size: 10px; color: #64748b;">Klikněte na řádek vlaku pro udělení souhlasu</span>
+                <span style="font-size: 10px; color: #64748b;">Klikněte na blikající řádek nebo tlačítko pro udělení souhlasu</span>
             </div>
             <div class="panel-content">
                 <table class="gvd-table">
@@ -437,12 +466,12 @@
             <div class="modal-body">
                 <p>Simulátor vychází z reálných předpisů ČD a zabezpečovacího zařízení JOP (AŽD Praha).</p>
                 
-                <h4>1. Stavění vlakové cesty (VC):</h4>
+                <h4>1. Stavění vlakové cesty (VC) a průjezdu:</h4>
                 <ul>
                     <li>Klikněte <strong>levým tlačítkem</strong> na vjezdové (např. <code>1L</code>, <code>1S</code>) nebo odjezdové návěstidlo (<code>S1</code>, <code>L1</code> atd.). Návěstidlo se orámuje zeleně.</li>
                     <li>Následně klikněte na <strong>cílovou staniční kolej</strong> (<code>1</code>, <code>2</code>, <code>3</code>...) nebo trať.</li>
                     <li>Systém automaticky přestaví všechny výhybky do správného směru, zamkne kolejové úseky do <strong>zářivě zeleného závěru</strong> (přesně od návěstidla!) a na návěstidle rozsvítí <strong>Volno</strong>.</li>
-                    <li>Po projetí čela vlaku návěstidlo automaticky padá do polohy <strong>Stůj</strong> a úseky se za vlakem postupně uvolňují.</li>
+                    <li><strong>Průjezd stanicí:</strong> Můžete předem postavit vjezdovou i odjezdovou cestu ze stejné koleje! Obě návěstidla svítí na Volno a vlak plynule projede bez zastavení.</li>
                 </ul>
 
                 <h4>2. Rušení cesty (RC) a Přivolávací návěst (PN):</h4>
@@ -453,8 +482,9 @@
 
                 <h4>3. Vjezd vlaků a traťový souhlas:</h4>
                 <ul>
-                    <li>Vlaky se stavem <code>?</code> čekají v sousední stanici. Kliknutím na tlačítko <em>Udělit souhlas</em> nebo kliknutím na řádek vlaku v tabulce jim udělíte souhlas k vjezdu (změní se na <code>!</code> a vjedou na trať).</li>
-                    <li>V horní liště můžete zapnout <strong>🚦 Auto vjezd: ZAP</strong> – pak vlaky jezdí samy podle jízdního řádu bez nutnosti ručního klikání!</li>
+                    <li>Vlaky se stavem <code>?</code> čekají v sousední stanici podle jízdního řádu. Na obrazovce začne blikat žlutý panel TZZ i výstražný banner.</li>
+                    <li>Kliknutím na tlačítko <em>Udělit souhlas</em>, kliknutím na panel TZZ na kolejišti nebo na řádek vlaku v tabulce mu udělíte souhlas k vjezdu (změní se na <code>!</code> a vjede na trať).</li>
+                    <li>V horní liště můžete zapnout <strong>🚦 Auto vjezd: ZAP</strong> – vlaky pak vyjíždí automaticky přesně podle grafikou bez ručního klikání!</li>
                 </ul>
 
                 <h4>4. Klávesové zkratky:</h4>
@@ -498,7 +528,6 @@
         </div>
     </div>
 
-    <!-- Skripty -->
     <script type="module" src="./src/main.js"></script>
 </body>
 </html>

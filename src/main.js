@@ -1,5 +1,5 @@
 /**
- * main.js - Hlavní řídicí logika s podporou přepínání stanic, automatického vjezdu a čistého GUI
+ * main.js - Hlavní řídicí modul s interaktivním TZZ panelem a podporou průjezdů
  */
 import { AudioSystem } from './AudioSystem.js';
 import { TrackGraph } from './TrackGraph.js';
@@ -25,12 +25,12 @@ const autoTrainBtn = document.getElementById('auto-train-btn');
 const stationSelect = document.getElementById('station-select');
 const stationTitle = document.getElementById('station-title');
 const stationSubtitle = document.getElementById('station-subtitle');
+const tzzBanner = document.getElementById('tzz-alert-banner');
 
 let selectedStartSignal = null;
 let lastTimestamp = performance.now();
 let lastUiUpdate = 0;
 
-// Nastavení rozměrů canvasu podle stanice
 function applyStationDimensions(stationId) {
     const stConfig = graph.stationConfig;
     if (stConfig) {
@@ -80,11 +80,7 @@ function handleRemoteAction(msg) {
         graph.cancelRoute(msg.payload.signalId);
         logMessage(`Druhý výpravčí zrušil cestu od ${msg.payload.signalId}`);
     } else if (msg.type === 'START_TRAIN') {
-        const tr = timetable.trains.find(t => t.id === msg.payload.trainId);
-        if (tr) {
-            tr.startApproach();
-            logMessage(`Druhý výpravčí udělil souhlas k vjezdu vlaku ${tr.id}`);
-        }
+        grantTrainEntry(msg.payload.trainId, false);
     } else if (msg.type === 'SPAWN_TRAIN') {
         timetable.spawnRandomTrain();
         logMessage(`Druhý výpravčí vložil nový vlak`);
@@ -110,29 +106,57 @@ function switchStation(newStationId, notifyPeer = true) {
 }
 
 /**
- * Udělení souhlasu k vjezdu vlaku
+ * Udělení traťového souhlasu a vjezd vlaku
  */
-function grantTrainEntry(trainId) {
+function grantTrainEntry(trainId, broadcast = true) {
     const train = timetable.trains.find(t => t.id === trainId);
-    if (!train || train.state !== 'WAITING_CONSENT') return;
+    if (!train || (train.state !== 'WAITING_CONSENT' && train.state !== 'PLANNED')) return;
 
     train.startApproach();
     audio.playApproach1();
     logMessage(`✓ Udělen souhlas k vjezdu vlaku ${train.id} ze stanice ${train.from}`);
 
-    if (train.direction === 'RIGHT') {
-        graph.grantConsent('WEST');
-    } else {
-        graph.grantConsent('EAST');
-    }
+    const dirKey = train.direction === 'RIGHT' ? 'WEST' : 'EAST';
+    graph.grantConsent(dirKey);
 
     renderTimetableTable();
-    mp.sendAction('START_TRAIN', { trainId: train.id });
+    updateTzzBanner();
+
+    if (broadcast) {
+        mp.sendAction('START_TRAIN', { trainId: train.id });
+    }
 }
 
 /**
- * Delegovaný click listener na tabulku GVD - funguje vždy 100% spolehlivě!
+ * Aktualizace výstražného banneru traťového souhlasu nad plátnem
  */
+function updateTzzBanner() {
+    if (!tzzBanner) return;
+
+    // Najdeme, zda některý TZZ žádá o souhlas
+    let pendingTzz = null;
+    for (const [key, t] of Object.entries(graph.tzz)) {
+        if (t.requestPending && t.pendingTrainId) {
+            pendingTzz = t;
+            break;
+        }
+    }
+
+    if (pendingTzz) {
+        tzzBanner.style.display = 'flex';
+        tzzBanner.innerHTML = `
+            <span>⚠️ <strong>ŽÁDOST ZE SOUSEDNÍ STANICE:</strong> Vlak <strong>${pendingTzz.pendingTrainId}</strong> čeká na udělení traťového souhlasu!</span>
+            <button class="btn-action-small" style="font-size: 11px; padding: 4px 12px; background: #22c55e;" data-tzz-grant="${pendingTzz.pendingTrainId}">👉 UDĚLIT SOUHLAS K VJEZDU</button>
+        `;
+        tzzBanner.querySelector('[data-tzz-grant]')?.addEventListener('click', () => {
+            grantTrainEntry(pendingTzz.pendingTrainId);
+        });
+    } else {
+        tzzBanner.style.display = 'none';
+    }
+}
+
+// Delegovaný klik na tabulku GVD
 if (timetableTbody) {
     timetableTbody.addEventListener('click', (e) => {
         audio.init();
@@ -147,16 +171,13 @@ if (timetableTbody) {
         if (row) {
             const trainId = row.getAttribute('data-train-id');
             const train = timetable.trains.find(t => t.id === trainId);
-            if (train && train.state === 'WAITING_CONSENT') {
+            if (train && (train.state === 'WAITING_CONSENT' || train.state === 'PLANNED')) {
                 grantTrainEntry(trainId);
             }
         }
     });
 }
 
-/**
- * Vykreslení tabulky vlaků (GVD)
- */
 function renderTimetableTable() {
     if (!timetableTbody) return;
 
@@ -165,24 +186,27 @@ function renderTimetableTable() {
         let stateIcon = '';
         let stateClass = '';
 
-        if (train.state === 'WAITING_CONSENT') {
-            stateIcon = '? (Čeká na souhlas)';
+        if (train.state === 'PLANNED') {
+            stateIcon = `Plánován (${train.arrTime})`;
+            stateClass = 'state-planned';
+        } else if (train.state === 'WAITING_CONSENT') {
+            stateIcon = '? (Čeká na souhlas v sousední stanici)';
             stateClass = 'state-waiting';
         } else if (train.state === 'APPROACHING') {
             stateIcon = '! (Vjíždí na trať)';
             stateClass = 'state-approaching';
         } else if (train.state === 'MOVING') {
-            stateIcon = '* (V pohybu)';
+            stateIcon = '* (V pohybu po stanici)';
             stateClass = 'state-moving';
         } else if (train.state === 'STOPPED') {
-            stateIcon = `Stojí (${Math.ceil(train.dwellRemaining)}s)`;
+            stateIcon = `Stojí u perónu (${Math.ceil(train.dwellRemaining)}s)`;
             stateClass = 'state-stopped';
         } else if (train.state === 'DEPARTED') {
             stateIcon = 'Odjel';
             stateClass = 'state-departed';
         }
 
-        const canGrant = train.state === 'WAITING_CONSENT';
+        const canGrant = train.state === 'WAITING_CONSENT' || train.state === 'PLANNED';
 
         html += `
             <tr class="${stateClass}" data-train-id="${train.id}" style="cursor: ${canGrant ? 'pointer' : 'default'}">
@@ -193,7 +217,7 @@ function renderTimetableTable() {
                 <td><span class="track-tag">${train.targetTrack.replace('K', 'Kolej ')}</span></td>
                 <td>
                     <span class="state-label">${stateIcon}</span>
-                    ${canGrant ? `<button class="btn-action-small" data-grant-id="${train.id}">Udělit souhlas</button>` : ''}
+                    ${train.state === 'WAITING_CONSENT' ? `<button class="btn-action-small" data-grant-id="${train.id}">Udělit souhlas</button>` : ''}
                 </td>
             </tr>
         `;
@@ -210,20 +234,20 @@ function gameLoop(currentTimestamp) {
     lastTimestamp = currentTimestamp;
     const deltaSec = Math.min(deltaMs / 1000, 0.1);
 
-    // Aktualizace času
+    // Aktualizace simulačního času a příchodu vlaků
     if (timetable.timeScale > 0) {
-        timetable.updateTime(deltaSec);
+        timetable.updateTime(deltaSec, graph, audio);
     }
     if (timeDisplay) {
         timeDisplay.textContent = timetable.getFormattedTime();
     }
 
-    // Aktualizace vlaků
+    // Aktualizace pozic vlaků
     timetable.trains.forEach(train => {
         train.update(graph, deltaSec * timetable.timeScale, audio);
     });
 
-    // Kontrola uvolnění přejezdů
+    // Kontrola přejezdů
     for (const cross of Object.values(graph.crossings)) {
         const sec1 = graph.sections['T1'];
         if (sec1 && !sec1.occupied && !sec1.locked && cross.state === 'CLOSED') {
@@ -231,12 +255,13 @@ function gameLoop(currentTimestamp) {
         }
     }
 
-    // Vykreslení kolejiště
+    // Vykreslení
     renderer.render(timetable.trains, selectedStartSignal);
 
-    // UI tabulka vlaků - aktualizace 2x za sekundu (ne 60x za sekundu!), aby nerušila klikání
-    if (currentTimestamp - lastUiUpdate > 500) {
+    // UI aktualizace
+    if (currentTimestamp - lastUiUpdate > 400) {
         renderTimetableTable();
+        updateTzzBanner();
         lastUiUpdate = currentTimestamp;
     }
 
@@ -252,23 +277,43 @@ canvas.addEventListener('click', (e) => {
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // 1. Kliknutí na návěstidlo
+    // 1. Kliknutí na TZZ panel (Traťový souhlas)
+    for (const [key, tzz] of Object.entries(graph.tzz)) {
+        const { x, y } = tzz.arrowPos;
+        // Oblast tlačítka TZZ na canvasu
+        if (mouseX >= x - 10 && mouseX <= x + 160 && mouseY >= y - 10 && mouseY <= y + 40) {
+            audio.playRelayClick();
+            if (tzz.requestPending && tzz.pendingTrainId) {
+                // Udělení souhlasu přímo z kliknutí na blikající TZZ panel!
+                grantTrainEntry(tzz.pendingTrainId);
+            } else if (tzz.direction === 'OUT_OF_STATION') {
+                tzz.direction = 'NONE';
+                logMessage(`Odjezdový traťový souhlas ${tzz.name} zrušen.`);
+            } else {
+                tzz.direction = 'OUT_OF_STATION';
+                logMessage(`Traťový souhlas ${tzz.name} udělen pro odjezd ze stanice.`);
+            }
+            return;
+        }
+    }
+
+    // 2. Kliknutí na návěstidlo
     for (const sig of Object.values(graph.signals)) {
         const dist = Math.hypot(mouseX - sig.position.x, mouseY - sig.position.y);
-        if (dist < 20) {
+        if (dist < 22) {
             audio.playRelayClick();
             if (selectedStartSignal === sig.id) {
                 selectedStartSignal = null;
                 logMessage(`Zrušen výběr návěstidla ${sig.id}`);
             } else {
                 selectedStartSignal = sig.id;
-                logMessage(`Vybráno návěstidlo ${sig.id} (začátek cesty). Nyní klikněte na cílovou kolej (K1, K2...).`);
+                logMessage(`Vybráno návěstidlo ${sig.id} (začátek cesty). Nyní klikněte na cílovou kolej (K1..K5) nebo trať.`);
             }
             return;
         }
     }
 
-    // 2. Kliknutí na cílovou kolej / úsek při vybraném návěstidle
+    // 3. Kliknutí na cílovou kolej při vybraném návěstidle (Stavění cesty / průjezdu)
     if (selectedStartSignal) {
         const targetSection = findClickedSection(mouseX, mouseY);
         if (targetSection) {
@@ -289,7 +334,7 @@ canvas.addEventListener('click', (e) => {
         }
     }
 
-    // 3. Kliknutí na výhybku v klidu
+    // 4. Kliknutí na výhybku v klidu
     for (const sw of Object.values(graph.switches)) {
         const dist = Math.hypot(mouseX - sw.joint.x, mouseY - sw.joint.y);
         if (dist < 22) {
@@ -303,25 +348,9 @@ canvas.addEventListener('click', (e) => {
             return;
         }
     }
-
-    // 4. Kliknutí na TZZ traťový souhlas
-    for (const [key, tzz] of Object.entries(graph.tzz)) {
-        const dist = Math.hypot(mouseX - tzz.arrowPos.x, mouseY - tzz.arrowPos.y);
-        if (dist < 32) {
-            audio.playRelayClick();
-            if (tzz.direction === 'OUT_OF_STATION') {
-                tzz.direction = 'NONE';
-                logMessage(`Traťový souhlas ${tzz.name} zrušen.`);
-            } else {
-                tzz.direction = 'OUT_OF_STATION';
-                logMessage(`Traťový souhlas ${tzz.name} udělen pro odjezd.`);
-            }
-            return;
-        }
-    }
 });
 
-// Pravé tlačítko - zrušení výběru / rušení cesty (RC) / PN
+// Pravé tlačítko - rušení cesty (RC) nebo přivolávací návěst (PN)
 canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     audio.init();
@@ -337,7 +366,7 @@ canvas.addEventListener('contextmenu', (e) => {
 
     for (const sig of Object.values(graph.signals)) {
         const dist = Math.hypot(mouseX - sig.position.x, mouseY - sig.position.y);
-        if (dist < 20) {
+        if (dist < 22) {
             const ok = graph.cancelRoute(sig.id);
             if (ok) {
                 audio.playRelayClick();
@@ -356,10 +385,10 @@ canvas.addEventListener('contextmenu', (e) => {
 function findClickedSection(mx, my) {
     for (const sec of Object.values(graph.sections)) {
         const [p1, p2] = sec.points;
-        const minX = Math.min(p1.x, p2.x) - 15;
-        const maxX = Math.max(p1.x, p2.x) + 15;
-        const minY = Math.min(p1.y, p2.y) - 15;
-        const maxY = Math.max(p1.y, p2.y) + 15;
+        const minX = Math.min(p1.x, p2.x) - 18;
+        const maxX = Math.max(p1.x, p2.x) + 18;
+        const minY = Math.min(p1.y, p2.y) - 18;
+        const maxY = Math.max(p1.y, p2.y) + 18;
 
         if (mx >= minX && mx <= maxX && my >= minY && my <= maxY) {
             return sec;
@@ -381,14 +410,7 @@ if (autoTrainBtn) {
         timetable.autoEntry = !timetable.autoEntry;
         autoTrainBtn.textContent = timetable.autoEntry ? '🚦 Auto vjezd: ZAP' : '🚦 Auto vjezd: VYP';
         autoTrainBtn.classList.toggle('active', timetable.autoEntry);
-        logMessage(`Automatický vjezd vlaků přepnut na: ${timetable.autoEntry ? 'ZAPNUTO (vlaky jezdí automaticky)' : 'VYPNUTO (vyžadován souhlas)'}`);
-
-        if (timetable.autoEntry) {
-            // Pokud jsou čekající vlaky, rovnou je spustíme
-            timetable.trains.forEach(t => {
-                if (t.state === 'WAITING_CONSENT') grantTrainEntry(t.id);
-            });
-        }
+        logMessage(`Automatický vjezd vlaků přepnut na: ${timetable.autoEntry ? 'ZAPNUTO (podle jízdního řádu)' : 'VYPNUTO (vyžadován traťový souhlas)'}`);
     });
 }
 
@@ -399,7 +421,7 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'v' || e.key === 'V') {
         const tr = timetable.spawnRandomTrain();
         audio.playApproach1();
-        logMessage(`Vložen náhodný nákladní vlak: ${tr.id}.`);
+        logMessage(`Do GVD byl přidán nový vlak: ${tr.id}.`);
         renderTimetableTable();
         mp.sendAction('SPAWN_TRAIN', {});
     } else if (e.key === 'p' || e.key === 'P' || e.code === 'Space') {
@@ -422,7 +444,7 @@ window.addEventListener('keydown', (e) => {
     }
 });
 
-// Rychlost simulace
+// Ovládání rychlosti
 document.getElementById('btn-speed-pause')?.addEventListener('click', () => {
     timetable.timeScale = 0;
     speedDisplay.textContent = 'PAUZA';
@@ -451,7 +473,7 @@ soundBtn?.addEventListener('click', () => {
     soundBtn.textContent = on ? '🔊 Zvuk: ZAP' : '🔇 Zvuk: VYP';
 });
 
-// Modální okna (Nápověda a Multiplayer)
+// Modální okna
 function openModal(modalId) {
     document.getElementById(modalId)?.classList.add('active');
 }
@@ -470,7 +492,6 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
     });
 });
 
-// Multiplayer ovládání
 document.getElementById('btn-host-game')?.addEventListener('click', () => {
     mp.hostGame();
 });
@@ -479,8 +500,9 @@ document.getElementById('btn-join-game')?.addEventListener('click', () => {
     mp.joinGame(code);
 });
 
-// Start
+// Start simulace
 renderTimetableTable();
-logMessage('Simulátor JOP Staničář spuštěn.');
-logMessage('Klikněte na vjezdové návěstidlo (1L / 1S) a poté na staniční kolej pro postavení vlakové cesty.');
+updateTzzBanner();
+logMessage('Simulátor JOP Staničář připraven.');
+logMessage('Pro vjezd vlaku klikněte na vjezdové návěstidlo (1L) a cílovou kolej (K1..K5).');
 requestAnimationFrame(gameLoop);
