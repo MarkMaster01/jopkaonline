@@ -1,92 +1,39 @@
 /**
- * Timetable.js - Grafikon vlakové dopravy (GVD) a plánovač provozu pro Staničář
+ * Timetable.js - Grafikon vlakové dopravy s podporou více stanic a volitelného automatického vjezdu
  */
+import { STATIONS } from './Stations.js';
 import { Train } from './Train.js';
 
 export class Timetable {
-    constructor() {
-        this.trains = [];
-        this.simTimeSec = 8 * 3600; // Počáteční čas simulace 08:00:00
-        this.timeScale = 1;         // 1x, 2x, 5x, 0 = pauza
+    constructor(stationId = 'luzna') {
+        this.simTimeSec = 8 * 3600; // 08:00:00
+        this.timeScale = 1;
+        this.autoEntry = false; // Nastavení: automatický vjezd bez nutnosti manuálního souhlasu
         this.trainCounter = 100;
+        this.trains = [];
 
-        this.initDefaultSchedule();
+        this.loadStation(stationId);
     }
 
-    initDefaultSchedule() {
-        const schedule = [
-            {
-                id: 'Os 4812',
-                category: 'Os',
-                from: 'Lužná',
-                to: 'Brod',
-                targetTrack: 'K1',
-                arrTime: '08:03',
-                depTime: '08:06',
-                direction: 'RIGHT',
-                speed: 0.0035,
-                maxSpeed: 80,
-                dwellDuration: 12,
-                state: 'WAITING_CONSENT'
-            },
-            {
-                id: 'R 671',
-                category: 'R',
-                from: 'Brod',
-                to: 'Lužná',
-                targetTrack: 'K2',
-                arrTime: '08:05',
-                depTime: '08:09',
-                direction: 'LEFT',
-                speed: 0.0045,
-                maxSpeed: 100,
-                dwellDuration: 15,
-                state: 'WAITING_CONSENT'
-            },
-            {
-                id: 'Pn 52140',
-                category: 'Pn',
-                from: 'Lužná',
-                to: 'Brod',
-                targetTrack: 'K3',
-                arrTime: '08:12',
-                depTime: '08:16',
-                direction: 'RIGHT',
-                speed: 0.003,
-                maxSpeed: 70,
-                dwellDuration: 10,
-                state: 'WAITING_CONSENT'
-            },
-            {
-                id: 'Sp 1745',
-                category: 'Sp',
-                from: 'Brod',
-                to: 'Lužná',
-                targetTrack: 'K1',
-                arrTime: '08:18',
-                depTime: '08:22',
-                direction: 'LEFT',
-                speed: 0.004,
-                maxSpeed: 95,
-                dwellDuration: 14,
-                state: 'WAITING_CONSENT'
-            }
-        ];
-
-        this.trains = schedule.map(cfg => new Train(cfg));
+    loadStation(stationId) {
+        this.currentStationId = stationId;
+        const station = STATIONS[stationId] || STATIONS['luzna'];
+        this.trains = station.defaultSchedule.map(cfg => new Train(cfg));
     }
 
     /**
-     * Vloží nový náhodný nákladní nebo spěšný vlak (Klávesa 'V')
+     * Vloží nový náhodný vlak do GVD
      */
     spawnRandomTrain() {
         this.trainCounter += 5;
+        const isBrod = this.currentStationId === 'brod';
         const isRight = Math.random() > 0.5;
-        const category = Math.random() > 0.4 ? 'Pn' : 'Nex';
-        const num = Math.floor(40000 + Math.random() * 20000);
+        const categories = ['Os', 'R', 'Pn', 'Nex'];
+        const cat = categories[Math.floor(Math.random() * categories.length)];
+        const num = Math.floor(1000 + Math.random() * 9000);
 
         const currentMin = Math.floor(this.simTimeSec / 60);
-        const arrM = currentMin + 2;
+        const arrM = currentMin + 1;
         const depM = arrM + 4;
 
         const formatT = (m) => {
@@ -95,30 +42,48 @@ export class Timetable {
             return `${String(h).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
         };
 
+        const targetTrack = isBrod 
+            ? (['K1', 'K2', 'K3', 'K4', 'K5'][Math.floor(Math.random() * 5)])
+            : (['K1', 'K2', 'K3'][Math.floor(Math.random() * 3)]);
+
         const newTrain = new Train({
-            id: `${category} ${num}`,
-            category: category,
-            from: isRight ? 'Lužná' : 'Brod',
-            to: isRight ? 'Brod' : 'Lužná',
-            targetTrack: Math.random() > 0.5 ? 'K2' : 'K3',
+            id: `${cat} ${num}`,
+            category: cat,
+            from: isRight ? 'Západ' : 'Východ',
+            to: isRight ? 'Východ' : 'Západ',
+            targetTrack: targetTrack,
             arrTime: formatT(arrM),
             depTime: formatT(depM),
             direction: isRight ? 'RIGHT' : 'LEFT',
-            speed: 0.003,
-            maxSpeed: 75,
-            dwellDuration: 8,
-            state: 'WAITING_CONSENT'
+            speed: 0.0035,
+            maxSpeed: 85,
+            dwellDuration: 12,
+            state: this.autoEntry ? 'APPROACHING' : 'WAITING_CONSENT'
         });
 
         this.trains.push(newTrain);
         return newTrain;
     }
 
-    /**
-     * Aktualizace simulačního času
-     */
     updateTime(deltaSec) {
         this.simTimeSec += deltaSec * this.timeScale;
+
+        // Pokud je zapnutý automatický vjezd vlaků, kontrolujeme, zda nastal čas příjezdu
+        if (this.autoEntry) {
+            const currentFormatted = this.getFormattedHourMin();
+            this.trains.forEach(t => {
+                if (t.state === 'WAITING_CONSENT' && t.arrTime <= currentFormatted) {
+                    t.startApproach();
+                }
+            });
+        }
+    }
+
+    getFormattedHourMin() {
+        const totalSec = Math.floor(this.simTimeSec);
+        const h = Math.floor(totalSec / 3600) % 24;
+        const m = Math.floor((totalSec % 3600) / 60);
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     }
 
     getFormattedTime() {

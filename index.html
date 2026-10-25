@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JOP Staničář Web — Simulátor řízení vlakové dopravy</title>
-    <!-- PeerJS pro multiplayer přímo v prohlížeči bez instalace -->
+    <!-- PeerJS pro multiplayer přímo v prohlížeči bez serveru -->
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <style>
         * {
@@ -14,85 +14,118 @@
         }
 
         body {
-            background-color: #05070a;
-            color: #eceff1;
+            background-color: #030712;
+            color: #f1f5f9;
             font-family: 'Consolas', 'Courier New', monospace;
-            padding: 10px 18px;
+            padding: 10px 14px;
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 10px;
             user-select: none;
+            min-height: 100vh;
         }
 
-        /* Horní lišta JOP */
+        /* Horní ovládací lišta JOP */
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            background: #0d131a;
-            border: 1px solid #263238;
-            border-radius: 4px;
-            padding: 8px 16px;
+            background: #0b1120;
+            border: 1px solid #1e293b;
+            border-radius: 5px;
+            padding: 8px 14px;
+            flex-wrap: wrap;
+            gap: 8px;
         }
 
-        .title-area h1 {
-            font-size: 16px;
+        .station-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .station-info h1 {
+            font-size: 15px;
             letter-spacing: 1px;
             color: #00e676;
             text-transform: uppercase;
         }
-        .title-area span {
+        .station-info span {
             font-size: 11px;
-            color: #78909c;
+            color: #64748b;
         }
 
-        .sim-controls {
+        .controls-toolbar {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .station-dropdown {
+            background: #020617;
+            color: #38bdf8;
+            border: 1px solid #0284c7;
+            padding: 5px 8px;
+            font-size: 12px;
+            font-family: inherit;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .station-dropdown option {
+            background: #0b1120;
+            color: #f1f5f9;
         }
 
         .clock-display {
             background: #000000;
-            border: 1px solid #37474f;
+            border: 1px solid #334155;
             padding: 4px 10px;
-            border-radius: 3px;
-            color: #ffd600;
-            font-size: 14px;
+            border-radius: 4px;
+            color: #facc15;
+            font-size: 13px;
             font-weight: bold;
         }
 
-        .btn-control {
+        .btn-ui {
             background: #1e293b;
-            color: #eceff1;
+            color: #f1f5f9;
             border: 1px solid #475569;
-            padding: 4px 9px;
-            font-size: 12px;
+            padding: 5px 9px;
+            font-size: 11px;
             cursor: pointer;
-            border-radius: 3px;
+            border-radius: 4px;
             font-family: inherit;
             transition: all 0.15s ease;
         }
-        .btn-control:hover {
+        .btn-ui:hover {
             background: #334155;
-            border-color: #64748b;
+            border-color: #94a3b8;
         }
-        .btn-control:active {
+        .btn-ui:active {
             background: #0f172a;
         }
-        .speed-badge {
+        .btn-ui.active {
+            background: #065f46;
+            border-color: #10b981;
+            color: #a7f3d0;
+        }
+
+        .speed-indicator {
             color: #00e676;
             font-weight: bold;
         }
 
-        /* Hlavní obrazovka kolejiště */
-        .canvas-container {
+        /* Hlavní plátno s maximalizovaným prostorem pro kolejiště */
+        .canvas-wrapper {
             position: relative;
             background: #000000;
-            border: 2px solid #263238;
-            border-radius: 4px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
-            overflow-x: auto;
+            border: 2px solid #1e293b;
+            border-radius: 5px;
+            box-shadow: 0 4px 25px rgba(0, 0, 0, 0.9);
+            overflow: auto;
+            display: flex;
+            justify-content: center;
         }
 
         canvas {
@@ -102,201 +135,270 @@
         }
 
         /* Dolní panely - GVD a záznamník */
-        .dashboard-grid {
+        .dashboard-container {
             display: grid;
-            grid-template-columns: 1.5fr 1fr;
-            gap: 12px;
+            grid-template-columns: 1.55fr 1fr;
+            gap: 10px;
+            flex: 1;
         }
 
-        .panel {
-            background: #0b0f15;
-            border: 1px solid #263238;
-            border-radius: 4px;
+        .panel-box {
+            background: #080d1a;
+            border: 1px solid #1e293b;
+            border-radius: 5px;
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            height: 230px;
+            height: 250px;
         }
 
-        .panel-header {
-            background: #141b24;
+        .panel-title {
+            background: #0f172a;
             padding: 6px 12px;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: bold;
-            color: #90a4ae;
-            border-bottom: 1px solid #263238;
+            color: #94a3b8;
+            border-bottom: 1px solid #1e293b;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
-        .panel-body {
+        .panel-content {
             flex: 1;
             overflow-y: auto;
             padding: 6px;
         }
 
         /* Tabulka GVD */
-        table.timetable {
+        table.gvd-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 11px;
         }
 
-        table.timetable th {
+        table.gvd-table th {
             text-align: left;
-            padding: 5px 6px;
-            color: #78909c;
-            border-bottom: 1px solid #263238;
+            padding: 4px 6px;
+            color: #64748b;
+            border-bottom: 1px solid #1e293b;
+            position: sticky;
+            top: 0;
+            background: #080d1a;
         }
 
-        table.timetable td {
-            padding: 5px 6px;
-            border-bottom: 1px solid #18222d;
+        table.gvd-table td {
+            padding: 4px 6px;
+            border-bottom: 1px solid #111827;
         }
 
-        .state-waiting {
-            color: #ffd600;
-            background: rgba(255, 214, 0, 0.05);
+        tr.state-waiting {
+            color: #facc15;
+            background: rgba(250, 204, 21, 0.05);
         }
-        .state-approaching {
-            color: #40c4ff;
+        tr.state-waiting:hover {
+            background: rgba(250, 204, 21, 0.15);
         }
-        .state-moving {
-            color: #00e676;
+        tr.state-approaching {
+            color: #38bdf8;
         }
-        .state-stopped {
-            color: #ff8a80;
+        tr.state-moving {
+            color: #4ade80;
         }
-        .state-departed {
-            color: #546e7a;
+        tr.state-stopped {
+            color: #f87171;
+            background: rgba(248, 113, 113, 0.05);
+        }
+        tr.state-departed {
+            color: #475569;
             opacity: 0.6;
         }
 
         .track-tag {
             background: #1e293b;
-            padding: 2px 5px;
+            padding: 1px 5px;
             border-radius: 3px;
-            color: #81d4fa;
+            color: #38bdf8;
             font-weight: bold;
         }
 
         .btn-action-small {
-            background: #00897b;
+            background: #0284c7;
             color: #ffffff;
             border: none;
-            padding: 2px 7px;
+            padding: 3px 8px;
             font-size: 10px;
-            border-radius: 2px;
+            border-radius: 3px;
             cursor: pointer;
             margin-left: 6px;
             font-family: inherit;
+            font-weight: bold;
         }
         .btn-action-small:hover {
-            background: #00bfa5;
+            background: #0ea5e9;
         }
 
         /* Deník zpráv */
         #status-log {
             font-size: 11px;
             line-height: 1.5;
-            color: #b0bec5;
+            color: #cbd5e1;
         }
         #status-log .time {
-            color: #546e7a;
+            color: #64748b;
             margin-right: 6px;
         }
 
-        /* Nápověda a multiplayer v patičce */
-        .footer-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
+        /* Modální okna (Overlay) */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(4px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal-overlay.active {
+            display: flex;
         }
 
-        .info-card {
-            background: #090d13;
-            border: 1px solid #1e293b;
-            padding: 10px 14px;
-            border-radius: 4px;
-            font-size: 11px;
-            line-height: 1.6;
-            color: #94a3b8;
-        }
-        .info-card h4 {
-            color: #38bdf8;
-            margin-bottom: 5px;
-            font-size: 12px;
-        }
-        .info-card strong {
-            color: #e2e8f0;
-        }
-
-        .mp-box {
+        .modal-window {
+            background: #0b1120;
+            border: 1px solid #38bdf8;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.9);
+            border-radius: 6px;
+            width: 90%;
+            max-width: 650px;
+            max-height: 85vh;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            overflow: hidden;
         }
-        .mp-row {
+
+        .modal-header {
+            background: #0f172a;
+            padding: 10px 16px;
+            border-bottom: 1px solid #1e293b;
             display: flex;
-            gap: 8px;
+            justify-content: space-between;
             align-items: center;
         }
+        .modal-header h3 {
+            font-size: 14px;
+            color: #38bdf8;
+        }
+        .btn-close-modal {
+            background: transparent;
+            border: none;
+            color: #94a3b8;
+            font-size: 18px;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .btn-close-modal:hover {
+            color: #f1f5f9;
+        }
+
+        .modal-body {
+            padding: 16px;
+            overflow-y: auto;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #cbd5e1;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .modal-body strong {
+            color: #38bdf8;
+        }
+        .modal-body ul {
+            padding-left: 20px;
+        }
+        .modal-body li {
+            margin-bottom: 6px;
+        }
+
         .mp-input {
             background: #020617;
             border: 1px solid #334155;
             color: #f8fafc;
-            padding: 4px 8px;
-            font-size: 11px;
+            padding: 6px 10px;
+            font-size: 12px;
             font-family: inherit;
-            border-radius: 3px;
-            width: 140px;
+            border-radius: 4px;
+            flex: 1;
         }
         .status-msg {
-            font-size: 11px;
+            font-size: 12px;
             font-weight: bold;
+            padding: 6px 10px;
+            border-radius: 4px;
+            background: #020617;
+            border: 1px solid #1e293b;
         }
-        .status-msg.success { color: #4ade80; }
-        .status-msg.error { color: #f87171; }
-        .status-msg.info { color: #60a5fa; }
+        .status-msg.success { color: #4ade80; border-color: #22c55e; }
+        .status-msg.error { color: #f87171; border-color: #ef4444; }
+        .status-msg.info { color: #60a5fa; border-color: #3b82f6; }
     </style>
 </head>
 <body>
 
-    <!-- Horní JOP lišta -->
+    <!-- Horní lišta JOP -->
     <header>
-        <div class="title-area">
-            <h1>STANIČÁŘ JOP — Stanice Lužná n. V.</h1>
-            <span>Elektronické stavědlo SZZ-ETB / AŽD Praha v prohlížeči</span>
+        <div class="station-info">
+            <h1 id="station-title">Stanice Lužná nad Vltavou</h1>
+            <span id="station-subtitle">Střední stanice se 3 dopravními kolejemi a přejezdem</span>
         </div>
 
-        <div class="sim-controls">
+        <div class="controls-toolbar">
+            <!-- Výběr stanice -->
+            <select id="station-select" class="station-dropdown">
+                <option value="luzna">Stanice Lužná n. V. (3 dopravní koleje)</option>
+                <option value="brod">Uzlová stanice Brod n. S. (5 kolejí, 3 směry)</option>
+            </select>
+
+            <!-- Hodiny a čas -->
             <div class="clock-display" id="sim-time">08:00:00</div>
-            <button class="btn-control" id="btn-speed-pause">Pauza (P)</button>
-            <button class="btn-control" id="btn-speed-1x">1x</button>
-            <button class="btn-control" id="btn-speed-2x">2x</button>
-            <button class="btn-control" id="btn-speed-5x">5x</button>
-            <span class="btn-control speed-badge" id="speed-badge">1x</span>
-            <button class="btn-control" id="btn-spawn-train">+ Náhodný vlak (V)</button>
-            <button class="btn-control" id="sound-toggle-btn">🔊 Zvuk: ZAP</button>
+            <button class="btn-ui" id="btn-speed-pause">Pauza</button>
+            <button class="btn-ui" id="btn-speed-1x">1x</button>
+            <button class="btn-ui" id="btn-speed-2x">2x</button>
+            <button class="btn-ui" id="btn-speed-5x">5x</button>
+            <span class="btn-ui speed-indicator" id="speed-badge">1x</span>
+
+            <!-- Nastavení automatického vjezdu -->
+            <button class="btn-ui" id="auto-train-btn">🚦 Auto vjezd: VYP</button>
+
+            <!-- Generování vlaku a zvuk -->
+            <button class="btn-ui" id="btn-spawn-train">+ Vlak (V)</button>
+            <button class="btn-ui" id="sound-toggle-btn">🔊 Zvuk: ZAP</button>
+
+            <!-- Tlačítka pro modální okna -->
+            <button class="btn-ui" id="btn-open-help">📖 Návod</button>
+            <button class="btn-ui" id="btn-open-mp">🌐 Multiplayer</button>
         </div>
     </header>
 
-    <!-- Plátno kolejiště JOP -->
-    <div class="canvas-container">
+    <!-- Hlavní plátno kolejiště JOP -->
+    <div class="canvas-wrapper">
         <canvas id="jopCanvas" width="1250" height="380"></canvas>
     </div>
 
-    <!-- Informační panely -->
-    <div class="dashboard-grid">
-        <!-- GVD Tabulka vlaků -->
-        <div class="panel">
-            <div class="panel-header">
+    <!-- Informační panely dole -->
+    <div class="dashboard-container">
+        <!-- GVD Informační panel vlaků -->
+        <div class="panel-box">
+            <div class="panel-title">
                 <span>INFORMAČNÍ PANEL VLAKŮ (GVD)</span>
-                <span style="font-size: 10px; color: #546e7a;">Klikněte na "Udělit souhlas" pro vjezd vlaku</span>
+                <span style="font-size: 10px; color: #64748b;">Klikněte na řádek vlaku pro udělení souhlasu</span>
             </div>
-            <div class="panel-body">
-                <table class="timetable">
+            <div class="panel-content">
+                <table class="gvd-table">
                     <thead>
                         <tr>
                             <th>Vlak</th>
@@ -315,37 +417,84 @@
         </div>
 
         <!-- Záznamník JOP -->
-        <div class="panel">
-            <div class="panel-header">
-                <span>ZÁZNAMNÍK UDÁLOSTÍ A POVELŮ</span>
+        <div class="panel-box">
+            <div class="panel-title">
+                <span>ZÁZNAMNÍK POVELŮ A UDÁLOSTÍ JOP</span>
             </div>
-            <div class="panel-body" id="status-log">
+            <div class="panel-content" id="status-log">
                 <!-- Zprávy -->
             </div>
         </div>
     </div>
 
-    <!-- Návod a Multiplayer -->
-    <div class="footer-grid">
-        <div class="info-card">
-            <h4>Jak řídit provoz (podle originálního manuálu Staničáře):</h4>
-            <ul>
-                <li><strong>Stavění vlakové cesty (VC):</strong> Klikněte <em>levým tlačítkem</em> na vjezdové návěstidlo (např. <strong>1L</strong> nebo <strong>1S</strong>), orámuje se zeleně. Následně klikněte na cílovou kolej (<strong>1</strong>, <strong>2</strong> nebo <strong>3</strong>). Výhybky se automaticky přehodí, koleje zezelenají a na návěstidle skočí Volno!</li>
-                <li><strong>Odjezd ze stanice:</strong> Klikněte na odjezdové návěstidlo (<strong>S1, S2, S3</strong> směr Východ nebo <strong>L1, L2, L3</strong> směr Západ) a poté na trať.</li>
-                <li><strong>Rušení cesty (RC):</strong> Klikněte <em>pravým tlačítkem</em> na návěstidlo s postavenou cestou pro okamžité shození.</li>
-                <li><strong>Přehození výhybek ručně:</strong> Klikněte přímo na kloub výhybky (W1, W2, W3, W4) v klidovém stavu.</li>
-            </ul>
-        </div>
-
-        <div class="info-card mp-box">
-            <h4>Síťová hra pro 2 hráče (Multiplayer se spolužákem):</h4>
-            <p>Můžete se propojit přímo v prohlížeči ze dvou různých počítačů nebo notebooků ve škole:</p>
-            <div class="mp-row">
-                <button class="btn-control" id="btn-host-game">Založit místnost (Host)</button>
-                <input type="text" id="join-room-code" class="mp-input" placeholder="Zadej kód místnosti">
-                <button class="btn-control" id="btn-join-game">Připojit k místnosti</button>
+    <!-- MODAL 1: Návod k obsluze Staničáře -->
+    <div class="modal-overlay" id="modal-help">
+        <div class="modal-window">
+            <div class="modal-header">
+                <h3>📖 NÁVOD K OBSLUZE SIMULÁTORU STANIČÁŘ JOP</h3>
+                <button class="btn-close-modal">&times;</button>
             </div>
-            <div id="mp-status" class="status-msg info">Síť: Připraveno (offline režim pro jednoho hráče)</div>
+            <div class="modal-body">
+                <p>Simulátor vychází z reálných předpisů ČD a zabezpečovacího zařízení JOP (AŽD Praha).</p>
+                
+                <h4>1. Stavění vlakové cesty (VC):</h4>
+                <ul>
+                    <li>Klikněte <strong>levým tlačítkem</strong> na vjezdové (např. <code>1L</code>, <code>1S</code>) nebo odjezdové návěstidlo (<code>S1</code>, <code>L1</code> atd.). Návěstidlo se orámuje zeleně.</li>
+                    <li>Následně klikněte na <strong>cílovou staniční kolej</strong> (<code>1</code>, <code>2</code>, <code>3</code>...) nebo trať.</li>
+                    <li>Systém automaticky přestaví všechny výhybky do správného směru, zamkne kolejové úseky do <strong>zářivě zeleného závěru</strong> (přesně od návěstidla!) a na návěstidle rozsvítí <strong>Volno</strong>.</li>
+                    <li>Po projetí čela vlaku návěstidlo automaticky padá do polohy <strong>Stůj</strong> a úseky se za vlakem postupně uvolňují.</li>
+                </ul>
+
+                <h4>2. Rušení cesty (RC) a Přivolávací návěst (PN):</h4>
+                <ul>
+                    <li>Kliknutím <strong>pravým tlačítkem</strong> na návěstidlo s postavenou cestou ji okamžitě zrušíte (RC).</li>
+                    <li>Kliknutím pravým tlačítkem na návěstidlo se znakem Stůj rozsvítíte <strong>blikající bílou přivolávací návěst (PN)</strong> pro vjezd vlaku na obsazenou kolej.</li>
+                </ul>
+
+                <h4>3. Vjezd vlaků a traťový souhlas:</h4>
+                <ul>
+                    <li>Vlaky se stavem <code>?</code> čekají v sousední stanici. Kliknutím na tlačítko <em>Udělit souhlas</em> nebo kliknutím na řádek vlaku v tabulce jim udělíte souhlas k vjezdu (změní se na <code>!</code> a vjedou na trať).</li>
+                    <li>V horní liště můžete zapnout <strong>🚦 Auto vjezd: ZAP</strong> – pak vlaky jezdí samy podle jízdního řádu bez nutnosti ručního klikání!</li>
+                </ul>
+
+                <h4>4. Klávesové zkratky:</h4>
+                <ul>
+                    <li><code>V</code> = Vložit nový náhodný vlak do provozu</li>
+                    <li><code>P</code> / <code>Mezerník</code> = Pozastavit / spustit simulaci</li>
+                    <li><code>1</code>, <code>2</code>, <code>5</code> = Nastavit rychlost simulace</li>
+                    <li><code>Esc</code> = Zrušit aktuální výběr</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 2: Multiplayer přes WebRTC (PeerJS) -->
+    <div class="modal-overlay" id="modal-mp">
+        <div class="modal-window">
+            <div class="modal-header">
+                <h3>🌐 SÍŤOVÁ HRA PRO 2 HRÁČE (MULTIPLAYER)</h3>
+                <button class="btn-close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Můžete se propojit se spolužákem přes internet nebo školní Wi-Fi přímo v prohlížeči bez instalace:</p>
+                
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-ui" id="btn-host-game" style="flex: 1; padding: 8px;">Založit místnost (Host)</button>
+                </div>
+
+                <div style="display: flex; gap: 8px; margin-top: 6px;">
+                    <input type="text" id="join-room-code" class="mp-input" placeholder="Zadej kód od spolužáka (např. JOP-4921)">
+                    <button class="btn-ui" id="btn-join-game" style="padding: 8px 14px;">Připojit</button>
+                </div>
+
+                <div id="mp-status" class="status-msg info" style="margin-top: 8px;">
+                    Stav sítě: Připraveno (offline režim pro jednoho hráče)
+                </div>
+
+                <p style="font-size: 11px; color: #64748b; margin-top: 6px;">
+                    Po propojení vidí oba výpravčí stejné kolejiště v reálném čase a mohou si společně předávat vlaky, stavět cesty a přepínat stanice.
+                </p>
+            </div>
         </div>
     </div>
 

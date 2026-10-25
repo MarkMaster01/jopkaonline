@@ -1,5 +1,5 @@
 /**
- * main.js - Hlavní řídicí logika simulátoru Staničář JOP
+ * main.js - Hlavní řídicí logika s podporou přepínání stanic, automatického vjezdu a čistého GUI
  */
 import { AudioSystem } from './AudioSystem.js';
 import { TrackGraph } from './TrackGraph.js';
@@ -10,8 +10,9 @@ import { MultiplayerManager } from './Multiplayer.js';
 // Inicializace komponent
 const canvas = document.getElementById('jopCanvas');
 const audio = new AudioSystem();
-const graph = new TrackGraph();
-const timetable = new Timetable();
+let currentStationId = 'luzna';
+const graph = new TrackGraph(currentStationId);
+const timetable = new Timetable(currentStationId);
 const renderer = new JopRenderer(canvas, graph);
 
 // UI Elementy
@@ -20,18 +21,34 @@ const speedDisplay = document.getElementById('speed-badge');
 const timetableTbody = document.getElementById('timetable-body');
 const statusLog = document.getElementById('status-log');
 const soundBtn = document.getElementById('sound-toggle-btn');
-const mpStatus = document.getElementById('mp-status');
+const autoTrainBtn = document.getElementById('auto-train-btn');
+const stationSelect = document.getElementById('station-select');
+const stationTitle = document.getElementById('station-title');
+const stationSubtitle = document.getElementById('station-subtitle');
 
 let selectedStartSignal = null;
-let hoveredElement = null;
 let lastTimestamp = performance.now();
+let lastUiUpdate = 0;
 
-// Multiplayer synchronizace
+// Nastavení rozměrů canvasu podle stanice
+function applyStationDimensions(stationId) {
+    const stConfig = graph.stationConfig;
+    if (stConfig) {
+        canvas.width = stConfig.canvasWidth || 1250;
+        canvas.height = stConfig.canvasHeight || 380;
+        if (stationTitle) stationTitle.textContent = stConfig.name;
+        if (stationSubtitle) stationSubtitle.textContent = stConfig.subtitle;
+    }
+}
+applyStationDimensions(currentStationId);
+
+// Multiplayer
 const mp = new MultiplayerManager((message) => {
     handleRemoteAction(message);
 });
 
 mp.onStatusChange((msg, type) => {
+    const mpStatus = document.getElementById('mp-status');
     if (mpStatus) {
         mpStatus.textContent = msg;
         mpStatus.className = `status-msg ${type}`;
@@ -43,16 +60,12 @@ function logMessage(msg) {
     if (!statusLog) return;
     const timeStr = timetable.getFormattedTime();
     statusLog.innerHTML = `<div><span class="time">[${timeStr}]</span> ${msg}</div>` + statusLog.innerHTML;
-    // Omezit historii na 15 zpráv
     const items = statusLog.querySelectorAll('div');
-    if (items.length > 15) {
+    if (items.length > 25) {
         items[items.length - 1].remove();
     }
 }
 
-/**
- * Zpracování akcí přijatých od spoluhráče po síti
- */
 function handleRemoteAction(msg) {
     if (!msg || !msg.type) return;
 
@@ -61,7 +74,7 @@ function handleRemoteAction(msg) {
         const res = graph.buildRoute(startSig, endTarget, isShunt);
         if (res.success) {
             audio.playRouteBuilt();
-            logMessage(`Druhý výpravčí postavil cestu ${startSig} -> ${endTarget}`);
+            logMessage(`Druhý výpravčí postavil cestu ${startSig} ➔ ${endTarget}`);
         }
     } else if (msg.type === 'CANCEL_ROUTE') {
         graph.cancelRoute(msg.payload.signalId);
@@ -74,51 +87,77 @@ function handleRemoteAction(msg) {
         }
     } else if (msg.type === 'SPAWN_TRAIN') {
         timetable.spawnRandomTrain();
-        logMessage(`Druhý výpravčí přidal nový vlak`);
+        logMessage(`Druhý výpravčí vložil nový vlak`);
+    } else if (msg.type === 'SWITCH_STATION') {
+        switchStation(msg.payload.stationId, false);
     }
 }
 
+function switchStation(newStationId, notifyPeer = true) {
+    currentStationId = newStationId;
+    selectedStartSignal = null;
+    graph.loadStation(newStationId);
+    timetable.loadStation(newStationId);
+    renderer.setGraph(graph);
+    applyStationDimensions(newStationId);
+    logMessage(`Přepnuto na stanici: ${graph.stationConfig.name}`);
+
+    if (stationSelect) stationSelect.value = newStationId;
+    if (notifyPeer) {
+        mp.sendAction('SWITCH_STATION', { stationId: newStationId });
+    }
+    renderTimetableTable();
+}
+
 /**
- * Hlavní herní smyčka
+ * Udělení souhlasu k vjezdu vlaku
  */
-function gameLoop(currentTimestamp) {
-    const deltaMs = currentTimestamp - lastTimestamp;
-    lastTimestamp = currentTimestamp;
-    const deltaSec = Math.min(deltaMs / 1000, 0.1);
+function grantTrainEntry(trainId) {
+    const train = timetable.trains.find(t => t.id === trainId);
+    if (!train || train.state !== 'WAITING_CONSENT') return;
 
-    // 1. Aktualizace času simulace
-    if (timetable.timeScale > 0) {
-        timetable.updateTime(deltaSec);
-    }
-    if (timeDisplay) {
-        timeDisplay.textContent = timetable.getFormattedTime();
+    train.startApproach();
+    audio.playApproach1();
+    logMessage(`✓ Udělen souhlas k vjezdu vlaku ${train.id} ze stanice ${train.from}`);
+
+    if (train.direction === 'RIGHT') {
+        graph.grantConsent('WEST');
+    } else {
+        graph.grantConsent('EAST');
     }
 
-    // 2. Aktualizace vlaků
-    timetable.trains.forEach(train => {
-        train.update(graph, deltaSec * timetable.timeScale, audio);
+    renderTimetableTable();
+    mp.sendAction('START_TRAIN', { trainId: train.id });
+}
+
+/**
+ * Delegovaný click listener na tabulku GVD - funguje vždy 100% spolehlivě!
+ */
+if (timetableTbody) {
+    timetableTbody.addEventListener('click', (e) => {
+        audio.init();
+        const btn = e.target.closest('[data-grant-id]');
+        if (btn) {
+            const trainId = btn.getAttribute('data-grant-id');
+            grantTrainEntry(trainId);
+            return;
+        }
+
+        const row = e.target.closest('tr[data-train-id]');
+        if (row) {
+            const trainId = row.getAttribute('data-train-id');
+            const train = timetable.trains.find(t => t.id === trainId);
+            if (train && train.state === 'WAITING_CONSENT') {
+                grantTrainEntry(trainId);
+            }
+        }
     });
-
-    // 3. Kontrola uvolnění přejezdu PZZ
-    const t1Occupied = graph.sections.T1.occupied || graph.sections.T1_EXT.occupied;
-    const t1Locked = graph.sections.T1.locked;
-    if (!t1Occupied && !t1Locked && graph.crossings.PZZ1.state === 'CLOSED') {
-        graph.crossings.PZZ1.state = 'OPEN';
-    }
-
-    // 4. Vykreslení
-    renderer.render(timetable.trains, selectedStartSignal, hoveredElement);
-
-    // 5. Aktualizace informačního panelu
-    updateTimetableUI();
-
-    requestAnimationFrame(gameLoop);
 }
 
 /**
- * Aktualizace tabulky vlaků (GVD)
+ * Vykreslení tabulky vlaků (GVD)
  */
-function updateTimetableUI() {
+function renderTimetableTable() {
     if (!timetableTbody) return;
 
     let html = '';
@@ -146,7 +185,7 @@ function updateTimetableUI() {
         const canGrant = train.state === 'WAITING_CONSENT';
 
         html += `
-            <tr class="${stateClass}" data-train-id="${train.id}">
+            <tr class="${stateClass}" data-train-id="${train.id}" style="cursor: ${canGrant ? 'pointer' : 'default'}">
                 <td><strong>${train.id}</strong></td>
                 <td>${train.category}</td>
                 <td>${train.from} ➔ ${train.to}</td>
@@ -161,37 +200,51 @@ function updateTimetableUI() {
     });
 
     timetableTbody.innerHTML = html;
-
-    // Obsluha kliknutí na tlačítka souhlasu
-    timetableTbody.querySelectorAll('[data-grant-id]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const trainId = btn.getAttribute('data-grant-id');
-            grantTrainEntry(trainId);
-        });
-    });
-}
-
-function grantTrainEntry(trainId) {
-    const train = timetable.trains.find(t => t.id === trainId);
-    if (!train || train.state !== 'WAITING_CONSENT') return;
-
-    train.startApproach();
-    audio.playApproach1();
-    logMessage(`Udělen souhlas k vjezdu vlaku ${train.id} ze stanice ${train.from}`);
-
-    if (train.direction === 'RIGHT') {
-        graph.grantConsent('WEST');
-    } else {
-        graph.grantConsent('EAST');
-    }
-
-    // Odeslat do sítě
-    mp.sendAction('START_TRAIN', { trainId: train.id });
 }
 
 /**
- * Obsluha kliknutí na plátno (Canvas)
+ * Herní smyčka
+ */
+function gameLoop(currentTimestamp) {
+    const deltaMs = currentTimestamp - lastTimestamp;
+    lastTimestamp = currentTimestamp;
+    const deltaSec = Math.min(deltaMs / 1000, 0.1);
+
+    // Aktualizace času
+    if (timetable.timeScale > 0) {
+        timetable.updateTime(deltaSec);
+    }
+    if (timeDisplay) {
+        timeDisplay.textContent = timetable.getFormattedTime();
+    }
+
+    // Aktualizace vlaků
+    timetable.trains.forEach(train => {
+        train.update(graph, deltaSec * timetable.timeScale, audio);
+    });
+
+    // Kontrola uvolnění přejezdů
+    for (const cross of Object.values(graph.crossings)) {
+        const sec1 = graph.sections['T1'];
+        if (sec1 && !sec1.occupied && !sec1.locked && cross.state === 'CLOSED') {
+            cross.state = 'OPEN';
+        }
+    }
+
+    // Vykreslení kolejiště
+    renderer.render(timetable.trains, selectedStartSignal);
+
+    // UI tabulka vlaků - aktualizace 2x za sekundu (ne 60x za sekundu!), aby nerušila klikání
+    if (currentTimestamp - lastUiUpdate > 500) {
+        renderTimetableTable();
+        lastUiUpdate = currentTimestamp;
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+/**
+ * Obsluha kliknutí na Canvas
  */
 canvas.addEventListener('click', (e) => {
     audio.init();
@@ -202,23 +255,21 @@ canvas.addEventListener('click', (e) => {
     // 1. Kliknutí na návěstidlo
     for (const sig of Object.values(graph.signals)) {
         const dist = Math.hypot(mouseX - sig.position.x, mouseY - sig.position.y);
-        if (dist < 18) {
+        if (dist < 20) {
             audio.playRelayClick();
             if (selectedStartSignal === sig.id) {
-                // Odznačit
                 selectedStartSignal = null;
                 logMessage(`Zrušen výběr návěstidla ${sig.id}`);
             } else {
                 selectedStartSignal = sig.id;
-                logMessage(`Vybráno návěstidlo ${sig.id} (začátek cesty). Klikněte na cílovou kolej.`);
+                logMessage(`Vybráno návěstidlo ${sig.id} (začátek cesty). Nyní klikněte na cílovou kolej (K1, K2...).`);
             }
             return;
         }
     }
 
-    // 2. Pokud máme vybrané výchozí návěstidlo, zkusíme postavit cestu ke koleji nebo trati
+    // 2. Kliknutí na cílovou kolej / úsek při vybraném návěstidle
     if (selectedStartSignal) {
-        // Hledáme klik na některou ze staničních kolejí (K1, K2, K3) nebo trať (T1, T2)
         const targetSection = findClickedSection(mouseX, mouseY);
         if (targetSection) {
             const res = graph.buildRoute(selectedStartSignal, targetSection.id, false);
@@ -238,10 +289,10 @@ canvas.addEventListener('click', (e) => {
         }
     }
 
-    // 3. Kliknutí na výhybku (přestavení výhybky v klidu)
+    // 3. Kliknutí na výhybku v klidu
     for (const sw of Object.values(graph.switches)) {
         const dist = Math.hypot(mouseX - sw.joint.x, mouseY - sw.joint.y);
-        if (dist < 20) {
+        if (dist < 22) {
             if (sw.locked) {
                 logMessage(`⚠ Výhybka ${sw.id} je uzamčena vlakovou cestou!`);
             } else {
@@ -253,24 +304,24 @@ canvas.addEventListener('click', (e) => {
         }
     }
 
-    // 4. Kliknutí na TZZ šipky (Traťový souhlas)
+    // 4. Kliknutí na TZZ traťový souhlas
     for (const [key, tzz] of Object.entries(graph.tzz)) {
         const dist = Math.hypot(mouseX - tzz.arrowPos.x, mouseY - tzz.arrowPos.y);
-        if (dist < 30) {
+        if (dist < 32) {
             audio.playRelayClick();
             if (tzz.direction === 'OUT_OF_STATION') {
                 tzz.direction = 'NONE';
                 logMessage(`Traťový souhlas ${tzz.name} zrušen.`);
             } else {
                 tzz.direction = 'OUT_OF_STATION';
-                logMessage(`Traťový souhlas ${tzz.name} udělen pro odjezd ze stanice.`);
+                logMessage(`Traťový souhlas ${tzz.name} udělen pro odjezd.`);
             }
             return;
         }
     }
 });
 
-// Pravé tlačítko myši - Zrušení volby nebo zrušení cesty (RC)
+// Pravé tlačítko - zrušení výběru / rušení cesty (RC) / PN
 canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     audio.init();
@@ -284,17 +335,15 @@ canvas.addEventListener('contextmenu', (e) => {
         return;
     }
 
-    // Klik na návěstidlo pravým = zrušení postavené cesty (RC)
     for (const sig of Object.values(graph.signals)) {
         const dist = Math.hypot(mouseX - sig.position.x, mouseY - sig.position.y);
-        if (dist < 18) {
+        if (dist < 20) {
             const ok = graph.cancelRoute(sig.id);
             if (ok) {
                 audio.playRelayClick();
                 logMessage(`Rušení cesty (RC): Cesta od návěstidla ${sig.id} zrušena.`);
                 mp.sendAction('CANCEL_ROUTE', { signalId: sig.id });
             } else {
-                // Přivolávací návěst (PN)
                 graph.setCallOn(sig.id);
                 audio.playApproach1();
                 logMessage(`Přivolávací návěst (PN) rozsvícena na návěstidle ${sig.id}!`);
@@ -319,16 +368,39 @@ function findClickedSection(mx, my) {
     return null;
 }
 
-/**
- * Klávesové zkratky podle návodu Staničáře
- */
+// Přepínač stanic
+if (stationSelect) {
+    stationSelect.addEventListener('change', (e) => {
+        switchStation(e.target.value, true);
+    });
+}
+
+// Tlačítko automatického vjezdu
+if (autoTrainBtn) {
+    autoTrainBtn.addEventListener('click', () => {
+        timetable.autoEntry = !timetable.autoEntry;
+        autoTrainBtn.textContent = timetable.autoEntry ? '🚦 Auto vjezd: ZAP' : '🚦 Auto vjezd: VYP';
+        autoTrainBtn.classList.toggle('active', timetable.autoEntry);
+        logMessage(`Automatický vjezd vlaků přepnut na: ${timetable.autoEntry ? 'ZAPNUTO (vlaky jezdí automaticky)' : 'VYPNUTO (vyžadován souhlas)'}`);
+
+        if (timetable.autoEntry) {
+            // Pokud jsou čekající vlaky, rovnou je spustíme
+            timetable.trains.forEach(t => {
+                if (t.state === 'WAITING_CONSENT') grantTrainEntry(t.id);
+            });
+        }
+    });
+}
+
+// Klávesové zkratky
 window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
 
     if (e.key === 'v' || e.key === 'V') {
         const tr = timetable.spawnRandomTrain();
         audio.playApproach1();
-        logMessage(`Vložen náhodný nákladní vlak: ${tr.id} do GVD.`);
+        logMessage(`Vložen náhodný nákladní vlak: ${tr.id}.`);
+        renderTimetableTable();
         mp.sendAction('SPAWN_TRAIN', {});
     } else if (e.key === 'p' || e.key === 'P' || e.code === 'Space') {
         timetable.timeScale = timetable.timeScale === 0 ? 1 : 0;
@@ -345,49 +417,70 @@ window.addEventListener('keydown', (e) => {
         speedDisplay.textContent = '5x';
     } else if (e.key === 'Escape') {
         selectedStartSignal = null;
+        closeAllModals();
         logMessage('Výběr zrušen.');
     }
 });
 
-// UI Tlačítka
-document.getElementById('btn-speed-pause').addEventListener('click', () => {
+// Rychlost simulace
+document.getElementById('btn-speed-pause')?.addEventListener('click', () => {
     timetable.timeScale = 0;
     speedDisplay.textContent = 'PAUZA';
 });
-document.getElementById('btn-speed-1x').addEventListener('click', () => {
+document.getElementById('btn-speed-1x')?.addEventListener('click', () => {
     timetable.timeScale = 1;
     speedDisplay.textContent = '1x';
 });
-document.getElementById('btn-speed-2x').addEventListener('click', () => {
+document.getElementById('btn-speed-2x')?.addEventListener('click', () => {
     timetable.timeScale = 2;
     speedDisplay.textContent = '2x';
 });
-document.getElementById('btn-speed-5x').addEventListener('click', () => {
+document.getElementById('btn-speed-5x')?.addEventListener('click', () => {
     timetable.timeScale = 5;
     speedDisplay.textContent = '5x';
 });
-document.getElementById('btn-spawn-train').addEventListener('click', () => {
+document.getElementById('btn-spawn-train')?.addEventListener('click', () => {
     const tr = timetable.spawnRandomTrain();
     audio.playApproach1();
-    logMessage(`Vložen náhodný nákladní vlak: ${tr.id}.`);
+    logMessage(`Vložen nový vlak: ${tr.id}.`);
+    renderTimetableTable();
     mp.sendAction('SPAWN_TRAIN', {});
 });
-soundBtn.addEventListener('click', () => {
+soundBtn?.addEventListener('click', () => {
     const on = audio.toggle();
     soundBtn.textContent = on ? '🔊 Zvuk: ZAP' : '🔇 Zvuk: VYP';
 });
 
-// Ovládání Multiplayeru
-document.getElementById('btn-host-game').addEventListener('click', () => {
-    mp.hostGame();
+// Modální okna (Nápověda a Multiplayer)
+function openModal(modalId) {
+    document.getElementById(modalId)?.classList.add('active');
+}
+function closeAllModals() {
+    document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
+}
+
+document.getElementById('btn-open-help')?.addEventListener('click', () => openModal('modal-help'));
+document.getElementById('btn-open-mp')?.addEventListener('click', () => openModal('modal-mp'));
+document.querySelectorAll('.btn-close-modal').forEach(btn => {
+    btn.addEventListener('click', closeAllModals);
+});
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeAllModals();
+    });
 });
 
-document.getElementById('btn-join-game').addEventListener('click', () => {
-    const code = document.getElementById('join-room-code').value;
+// Multiplayer ovládání
+document.getElementById('btn-host-game')?.addEventListener('click', () => {
+    mp.hostGame();
+});
+document.getElementById('btn-join-game')?.addEventListener('click', () => {
+    const code = document.getElementById('join-room-code')?.value;
     mp.joinGame(code);
 });
 
-// Start herní smyčky
-logMessage('Vítejte v simulátoru JOP Staničář!');
-logMessage('Pro stavění vlakové cesty klikněte na vjezdové/odjezdové návěstidlo a poté na kolej.');
+// Start
+renderTimetableTable();
+logMessage('Simulátor JOP Staničář spuštěn.');
+logMessage('Klikněte na vjezdové návěstidlo (1L / 1S) a poté na staniční kolej pro postavení vlakové cesty.');
 requestAnimationFrame(gameLoop);
