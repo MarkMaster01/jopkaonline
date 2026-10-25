@@ -21,7 +21,7 @@ export class JopRenderer {
     /**
      * Hlavní vykreslovací smyčka
      */
-    render() {
+    render(trains = []) {
         const { width, height } = this.canvas;
         this.ctx.fillStyle = this.colors.background;
         this.ctx.fillRect(0, 0, width, height);
@@ -29,6 +29,9 @@ export class JopRenderer {
         this.drawGrid();
         this.drawSections();
         this.drawSwitches();
+
+        // Vykreslení všech aktivních vlaků
+        trains.forEach(t => this.drawTrain(t));
     }
 
     drawGrid() {
@@ -93,5 +96,32 @@ export class JopRenderer {
             this.ctx.font = 'bold 13px Consolas';
             this.ctx.fillText(`${sw.id} [${sw.position === 'STRAIGHT' ? '+' : '-'}]`, sw.joint.x - 20, sw.joint.y + 25);
         });
+    }
+
+/**
+     * Vykreslení vlakové soupravy
+     */
+    drawTrain(train) {
+        if (!train || !train.position) return;
+
+        const { x, y } = train.position;
+
+        // Tělo vlaku (Červený obdélník)
+        this.ctx.fillStyle = '#f56565';
+        this.ctx.strokeStyle = '#feb2b2';
+        this.ctx.lineWidth = 2;
+        this.ctx.fillRect(x - 15, y - 8, 30, 16);
+        this.ctx.strokeRect(x - 15, y - 8, 30, 16);
+
+        // Čelní světlo (Žlutý kroužek vpravo)
+        this.ctx.beginPath();
+        this.ctx.arc(x + 12, y, 3, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#faf089';
+        this.ctx.fill();
+
+        // Číslo/ID Vlaku nad blokem
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.font = 'bold 11px Consolas';
+        this.ctx.fillText(train.id, x - 12, y - 12);
     }
 }
