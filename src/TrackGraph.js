@@ -1,5 +1,5 @@
 /**
- * TrackGraph.js - Zabezpečovací logika dle SŽDC ZTP 5/2000 JOP IV (Opraveno)
+ * TrackGraph.js - Zabezpečovací logika dle SŽDC ZTP 5/2000 JOP IV
  */
 import { STATIONS } from './Stations.js';
 
@@ -20,14 +20,14 @@ export class TrackGraph {
         this.tzz = JSON.parse(JSON.stringify(station.tzz));
         this.routeCatalog = JSON.parse(JSON.stringify(station.routeCatalog));
 
-        this.commandBuffer = []; 
-        this.bufferMode = 'VZ';   
+        this.commandBuffer = [];
+        this.bufferMode = 'VZ';
         this.activeRoutes = [];
         this.pendingDocCommand = null;
     }
 
     /**
-     * Kontrola, zda je traťový úsek volný pro vjezd vlaku ze sousední stanice
+     * Kontrola, zda je traťový úsek volný pro vjezd dalšího vlaku
      */
     isLineFree(directionKey) {
         const lineSectionId = directionKey === 'WEST' ? 'T1' : 'T2';
@@ -36,14 +36,13 @@ export class TrackGraph {
     }
 
     pushRouteToBuffer(startSignalId, endTargetId, isShunt = false) {
-        // Vyhledání cesty v katalogu
         const routeDef = this.routeCatalog.find(
             r => r.startSignal === startSignalId && 
                 (r.endTarget === endTargetId || r.id === endTargetId || r.targetTrack === endTargetId)
         );
 
         if (!routeDef) {
-            return { success: false, reason: 'Nenalezena odpovídající korigovaná vlaková ani posunová cesta.' };
+            return { success: false, reason: 'Nenalezena odpovídající vlaková ani posunová cesta.' };
         }
 
         const cmd = {
@@ -77,12 +76,12 @@ export class TrackGraph {
             return;
         }
 
-        // Kontrola pouze úseků uvnitř jízdní cesty (vyjmut úsek před návěstidlem)
+        // Kontrola úseků UVNITŘ cesty (ignoruje se úsek PŘED vjezdovým návěstidlem)
         for (const secId of routeDef.sections) {
             const sec = this.sections[secId];
             if (!sec) continue;
 
-            // Ignorovat úsek, na kterém vlak stojí před vjezdovým návěstidlem
+            // Pokud stál vlak před vjezdovým návěstidlem, ignorujeme obsazenost jeho stojícího úseku
             if (secId === sig.section && sig.id.length <= 2 && !sig.id.startsWith('S')) {
                 continue;
             }
@@ -116,7 +115,7 @@ export class TrackGraph {
             }
         });
 
-        // Nastavení návěsti na návěstidle
+        // Rozsvícení návěstidla
         sig.aspect = currentCmd.isShunt ? 'WHITE' : (routeDef.aspect || 'GREEN');
 
         // Uzavření přejezdů
