@@ -18,7 +18,7 @@ export class TrackGraph {
         this.crossings = JSON.parse(JSON.stringify(station.crossings));
         this.signals = JSON.parse(JSON.stringify(station.signals));
         this.tzz = JSON.parse(JSON.stringify(station.tzz));
-        this.routeCatalog = JSON.parse(JSON.stringify(station.routeCatalog));
+        this.routeCatalog = JSON.parse(JSON.stringify(station.routeCatalog || station.routes || []));
 
         this.commandBuffer = [];
         this.bufferMode = 'VZ';
@@ -36,13 +36,14 @@ export class TrackGraph {
     }
 
     pushRouteToBuffer(startSignalId, endTargetId, isShunt = false) {
+        // Vyhledání cesty v katalogu podle ID, endTarget nebo targetTrack
         const routeDef = this.routeCatalog.find(
             r => r.startSignal === startSignalId && 
                 (r.endTarget === endTargetId || r.id === endTargetId || r.targetTrack === endTargetId)
         );
 
         if (!routeDef) {
-            return { success: false, reason: 'Nenalezena odpovídající vlaková ani posunová cesta.' };
+            return { success: false, reason: `Nenalezena cesta z ${startSignalId} na ${endTargetId}.` };
         }
 
         const cmd = {
@@ -76,15 +77,15 @@ export class TrackGraph {
             return;
         }
 
-        // Kontrola úseků UVNITŘ cesty (ignoruje se úsek PŘED vjezdovým návěstidlem)
+        // Kontrola úseků UVNITŘ stavěné cesty
         for (const secId of routeDef.sections) {
-            const sec = this.sections[secId];
-            if (!sec) continue;
-
-            // Pokud stál vlak před vjezdovým návěstidlem, ignorujeme obsazenost jeho stojícího úseku
+            // Ignorujeme úsek před návěstidlem, na kterém vlak stál před vjezdovým návěstidlem
             if (secId === sig.section && sig.id.length <= 2 && !sig.id.startsWith('S')) {
                 continue;
             }
+
+            const sec = this.sections[secId];
+            if (!sec) continue;
 
             if (sec.locked || sec.occupied) {
                 currentCmd.status = 'BLOCKED_TRACK';
@@ -92,7 +93,7 @@ export class TrackGraph {
             }
         }
 
-        // Kontrola a přestavení výhybek
+        // Kontrola a uzamčení výhybek
         for (const [swId, targetPos] of Object.entries(routeDef.switches)) {
             const sw = this.switches[swId];
             if (sw) {
@@ -115,7 +116,7 @@ export class TrackGraph {
             }
         });
 
-        // Rozsvícení návěstidla
+        // Rozsvícení návěstidla (VOLNO / BÍLÁ)
         sig.aspect = currentCmd.isShunt ? 'WHITE' : (routeDef.aspect || 'GREEN');
 
         // Uzavření přejezdů
